@@ -37,7 +37,7 @@ import { cellKey } from "../utils/helpers";
  * @param {Function} props.onMetaChange    - (sheetId, newMeta) => void
  * @param {boolean}  props.disabled        - true when sheet is read-only
  */
-export function Toolbar({ hotRef, activeSheet, onMetaChange, disabled }) {
+export function Toolbar({ hotRef, activeSheet, onMetaChange, disabled, isAdmin, onOpenColumnSettings }) {
 
     // ── Track active formatting state of selected cells ───────────────────
     // When user clicks a cell, we read its meta and update these states
@@ -313,6 +313,20 @@ export function Toolbar({ hotRef, activeSheet, onMetaChange, disabled }) {
             >
                 <span style={{ fontSize: 11, fontFamily: "sans-serif" }}>✕fmt</span>
             </ToolbarBtn>
+
+            {/* ── Admin: Column Settings ────────────────────────────── */}
+            {isAdmin && (
+                <span>
+                    <Divider />
+                    <ToolbarBtn
+                        title="Edit column headers and data types (Admin only)"
+                        disabled={false}
+                        onClick={onOpenColumnSettings}
+                    >
+                        <span style={{ fontSize: 11 }}>⚙ Columns</span>
+                    </ToolbarBtn>
+                </span>
+            )}
 
         </div>
     );

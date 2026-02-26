@@ -74,6 +74,19 @@
                 </attributeTypes>
             </property>
 
+            <property key="isAdmin" type="attribute" dataSource="workbookSource" required="false">
+                <caption>Is Admin</caption>
+                <description>
+                    Map to Workbook.IsAdmin (Boolean). When true, the user sees
+                    the column settings panel to add/edit/delete column headers
+                    and data types. Regular users never see this panel.
+                    Compute this in Mendix based on the user's role.
+                </description>
+                <attributeTypes>
+                    <attributeType name="Boolean"/>
+                </attributeTypes>
+            </property>
+
             <property key="currentUserId" type="attribute" dataSource="workbookSource" required="false">
                 <caption>Current User ID</caption>
                 <description>

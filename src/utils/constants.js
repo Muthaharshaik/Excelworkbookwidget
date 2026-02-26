@@ -46,6 +46,7 @@ export const DEFAULT_SHEET = {
     orderIndex:  0,
     isEditable:  false,     // default safe — must be explicitly granted
     data:        null,      // null means use EMPTY_SHEET_DATA()
+    columns:     [],        // [] means use default A,B,C... behaviour until admin sets headers
     cellMeta:    {},
     colWidths:   [],
     rowHeights:  [],
@@ -93,8 +94,48 @@ export const CELL_TYPES = Object.freeze({
     DATE:     "date",
     CHECKBOX: "checkbox",
     DROPDOWN: "dropdown",
-    PASSWORD: "password",
+    TIME:     "time",
 });
+
+/**
+ * Metadata for each column type used in ColumnSettingsPanel UI.
+ * label     — displayed in the type dropdown
+ * hotType   — passed directly to HotTable columns[].type
+ * icon      — emoji shown next to type name in header
+ * hasSource — true if type needs a source list (dropdown)
+ * hasFormat — true if type needs a format string (numeric, date)
+ */
+export const COLUMN_TYPE_META = [
+    { value: "text",     label: "Text",     icon: "T",  hotType: "text",     hasSource: false, hasFormat: false },
+    { value: "numeric",  label: "Number",   icon: "#",  hotType: "numeric",  hasSource: false, hasFormat: true  },
+    { value: "date",     label: "Date",     icon: "📅", hotType: "date",     hasSource: false, hasFormat: true  },
+    { value: "time",     label: "Time",     icon: "⏰", hotType: "time",     hasSource: false, hasFormat: true  },
+    { value: "checkbox", label: "Checkbox", icon: "☑",  hotType: "checkbox", hasSource: false, hasFormat: false },
+    { value: "dropdown", label: "Dropdown", icon: "▾",  hotType: "dropdown", hasSource: true,  hasFormat: false },
+];
+
+/**
+ * Default numeric format string (uses Numbro.js pattern)
+ */
+export const DEFAULT_NUMERIC_FORMAT = "0,0.00";
+
+/**
+ * Default date format string
+ */
+export const DEFAULT_DATE_FORMAT = "DD/MM/YYYY";
+
+/**
+ * Default column definition for new columns.
+ */
+export const DEFAULT_COLUMN = {
+    key:        "",        // unique id, set on creation
+    header:     "Column",  // display name in header
+    type:       "text",    // CELL_TYPES value
+    width:      120,       // pixels
+    source:     [],        // for dropdown type
+    format:     "",        // for numeric/date type
+    readOnly:   false,     // column-level lock (admin can lock individual cols)
+};
 
 // ─── Toolbar Actions (used as identifiers) ────────────────────────────────────
 
