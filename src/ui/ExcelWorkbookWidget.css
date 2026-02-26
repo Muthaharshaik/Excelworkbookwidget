@@ -1,0 +1,417 @@
+/**
+ * ExcelWorkbookWidget.css
+ *
+ * All widget styles live here.
+ * Scoped under .eww-root to avoid conflicts with Mendix theme CSS.
+ * CSS class names are defined in constants.js (CSS object) —
+ * never hardcode class names in components.
+ *
+ * Structure:
+ *   1. CSS Variables (theming)
+ *   2. Root / Layout
+ *   3. Workbook Header
+ *   4. Toolbar
+ *   5. Grid Wrapper
+ *   6. Sheet Tab Bar
+ *   7. Read-Only Badge
+ *   8. Saving Indicator
+ *   9. Handsontable Overrides
+ *  10. Utility Classes
+ */
+
+/* ── 1. CSS Variables ──────────────────────────────────────────────────────── */
+
+.eww-root {
+    --eww-font-family:       -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --eww-font-size:         13px;
+
+    --eww-color-primary:     #1a73e8;
+    --eww-color-primary-hover: #1557b0;
+
+    --eww-color-bg:          #ffffff;
+    --eww-color-surface:     #f8f9fa;
+    --eww-color-border:      #e0e0e0;
+    --eww-color-border-dark: #bdbdbd;
+
+    --eww-color-text:        #202124;
+    --eww-color-text-muted:  #5f6368;
+    --eww-color-text-disabled: #bdbdbd;
+
+    --eww-color-tab-bg:      #f1f3f4;
+    --eww-color-tab-active:  #ffffff;
+    --eww-color-tab-hover:   #e8eaed;
+
+    --eww-color-readonly-bg: #fff8e1;
+    --eww-color-readonly-text: #f57f17;
+    --eww-color-readonly-border: #ffe082;
+
+    --eww-color-saving-bg:   #e8f5e9;
+    --eww-color-saving-text: #2e7d32;
+
+    --eww-color-error-bg:    #fce8e6;
+    --eww-color-error-text:  #c5221f;
+
+    --eww-shadow-toolbar:    0 1px 3px rgba(0,0,0,0.12);
+    --eww-shadow-dropdown:   0 4px 12px rgba(0,0,0,0.15);
+
+    --eww-radius-sm:         4px;
+    --eww-radius-md:         6px;
+    --eww-radius-lg:         8px;
+
+    --eww-header-height:     40px;
+    --eww-toolbar-height:    40px;
+    --eww-tabbar-height:     34px;
+}
+
+/* ── 2. Root / Layout ──────────────────────────────────────────────────────── */
+
+.eww-root {
+    display:        flex;
+    flex-direction: column;
+    width:          100%;
+    background:     var(--eww-color-bg);
+    border:         1px solid var(--eww-color-border);
+    border-radius:  var(--eww-radius-md);
+    overflow:       hidden;
+    font-family:    var(--eww-font-family);
+    font-size:      var(--eww-font-size);
+    color:          var(--eww-color-text);
+    box-sizing:     border-box;
+}
+
+.eww-root *,
+.eww-root *::before,
+.eww-root *::after {
+    box-sizing: inherit;
+}
+
+/* ── 3. Workbook Header ────────────────────────────────────────────────────── */
+
+.eww-header {
+    display:         flex;
+    align-items:     center;
+    justify-content: space-between;
+    height:          var(--eww-header-height);
+    padding:         0 12px;
+    background:      var(--eww-color-surface);
+    border-bottom:   1px solid var(--eww-color-border);
+    flex-shrink:     0;
+}
+
+.eww-header__title {
+    font-size:   14px;
+    font-weight: 600;
+    color:       var(--eww-color-text);
+    white-space: nowrap;
+    overflow:    hidden;
+    text-overflow: ellipsis;
+}
+
+.eww-header__meta {
+    display:     flex;
+    align-items: center;
+    gap:         8px;
+    flex-shrink: 0;
+}
+
+/* ── 4. Toolbar ────────────────────────────────────────────────────────────── */
+
+.eww-toolbar {
+    display:       flex;
+    align-items:   center;
+    gap:           2px;
+    height:        var(--eww-toolbar-height);
+    padding:       0 8px;
+    background:    var(--eww-color-bg);
+    border-bottom: 1px solid var(--eww-color-border);
+    flex-shrink:   0;
+    flex-wrap:     wrap;
+    box-shadow:    var(--eww-shadow-toolbar);
+}
+
+.eww-toolbar__divider {
+    width:      1px;
+    height:     20px;
+    background: var(--eww-color-border-dark);
+    margin:     0 4px;
+    flex-shrink: 0;
+}
+
+.eww-toolbar__btn {
+    display:         flex;
+    align-items:     center;
+    justify-content: center;
+    width:           28px;
+    height:          28px;
+    padding:         0;
+    background:      transparent;
+    border:          1px solid transparent;
+    border-radius:   var(--eww-radius-sm);
+    cursor:          pointer;
+    color:           var(--eww-color-text);
+    font-size:       13px;
+    font-family:     var(--eww-font-family);
+    transition:      background 0.1s, border-color 0.1s;
+    flex-shrink:     0;
+}
+
+.eww-toolbar__btn:hover:not(:disabled) {
+    background:   var(--eww-color-tab-hover);
+    border-color: var(--eww-color-border);
+}
+
+.eww-toolbar__btn:active:not(:disabled) {
+    background: var(--eww-color-tab-bg);
+}
+
+.eww-toolbar__btn--active {
+    background:   var(--eww-color-tab-bg);
+    border-color: var(--eww-color-border-dark);
+}
+
+.eww-toolbar__btn:disabled {
+    opacity: 0.4;
+    cursor:  default;
+}
+
+/* Wide toolbar buttons (e.g. font size selector) */
+.eww-toolbar__select {
+    height:      28px;
+    padding:     0 6px;
+    background:  var(--eww-color-bg);
+    border:      1px solid var(--eww-color-border);
+    border-radius: var(--eww-radius-sm);
+    font-size:   12px;
+    color:       var(--eww-color-text);
+    cursor:      pointer;
+    outline:     none;
+}
+
+.eww-toolbar__select:hover {
+    border-color: var(--eww-color-border-dark);
+}
+
+/* Color swatch inside toolbar buttons */
+.eww-toolbar__swatch {
+    width:        14px;
+    height:       14px;
+    border-radius: 2px;
+    border:       1px solid rgba(0,0,0,0.2);
+    display:      inline-block;
+}
+
+/* ── 5. Grid Wrapper ───────────────────────────────────────────────────────── */
+
+.eww-grid-wrapper {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+}
+
+/* ── 6. Sheet Tab Bar ──────────────────────────────────────────────────────── */
+
+.eww-tab-bar {
+    display:       flex;
+    align-items:   flex-end;
+    height:        var(--eww-tabbar-height);
+    padding:       0 8px;
+    background:    var(--eww-color-tab-bg);
+    border-top:    1px solid var(--eww-color-border);
+    overflow-x:    auto;
+    overflow-y:    hidden;
+    flex-shrink:   0;
+    gap:           2px;
+
+    /* Hide scrollbar but keep scroll functionality */
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+.eww-tab-bar::-webkit-scrollbar {
+    display: none;
+}
+
+.eww-tab {
+    display:        flex;
+    align-items:    center;
+    gap:            5px;
+    height:         28px;
+    padding:        0 12px;
+    background:     transparent;
+    border:         1px solid transparent;
+    border-bottom:  none;
+    border-radius:  var(--eww-radius-sm) var(--eww-radius-sm) 0 0;
+    cursor:         pointer;
+    font-family:    var(--eww-font-family);
+    font-size:      12px;
+    color:          var(--eww-color-text-muted);
+    white-space:    nowrap;
+    user-select:    none;
+    transition:     background 0.1s, color 0.1s;
+    flex-shrink:    0;
+}
+
+.eww-tab:hover:not(.eww-tab--active) {
+    background: var(--eww-color-tab-hover);
+    color:      var(--eww-color-text);
+}
+
+.eww-tab--active {
+    background:   var(--eww-color-tab-active);
+    border-color: var(--eww-color-border);
+    color:        var(--eww-color-text);
+    font-weight:  500;
+}
+
+.eww-tab--readonly .eww-tab__lock-icon {
+    font-size:   10px;
+    opacity:     0.6;
+    flex-shrink: 0;
+}
+
+.eww-tab__name {
+    max-width: 120px;
+    overflow:  hidden;
+    text-overflow: ellipsis;
+}
+
+/* Show delete button on tab hover */
+.eww-tab-bar div:hover .eww-tab__delete-btn {
+    opacity: 1 !important;
+}
+
+.eww-tab__delete-btn:hover {
+    background: rgba(0,0,0,0.1) !important;
+    color: #c5221f !important;
+}
+
+/* Add sheet button */
+.eww-tab--add {
+    font-size:   18px !important;
+    font-weight: 300 !important;
+    color:       var(--eww-color-text-muted) !important;
+    padding:     0 10px !important;
+    border:      none !important;
+    background:  transparent !important;
+}
+
+.eww-tab--add:hover {
+    color:      var(--eww-color-text) !important;
+    background: var(--eww-color-tab-hover) !important;
+}
+
+/* ── 7. Read-Only Badge ────────────────────────────────────────────────────── */
+
+.eww-readonly-badge {
+    display:       inline-flex;
+    align-items:   center;
+    gap:           5px;
+    padding:       3px 10px;
+    background:    var(--eww-color-readonly-bg);
+    border:        1px solid var(--eww-color-readonly-border);
+    border-radius: 12px;
+    font-size:     11px;
+    font-weight:   600;
+    color:         var(--eww-color-readonly-text);
+    white-space:   nowrap;
+}
+
+.eww-readonly-badge__icon {
+    font-size: 11px;
+}
+
+/* ── 8. Saving Indicator ───────────────────────────────────────────────────── */
+
+.eww-saving-indicator {
+    display:       inline-flex;
+    align-items:   center;
+    gap:           5px;
+    padding:       3px 10px;
+    border-radius: 12px;
+    font-size:     11px;
+    font-weight:   500;
+    transition:    opacity 0.3s;
+}
+
+.eww-saving-indicator--saving {
+    background: var(--eww-color-saving-bg);
+    color:      var(--eww-color-saving-text);
+    opacity:    1;
+}
+
+.eww-saving-indicator--saved {
+    background: transparent;
+    color:      var(--eww-color-text-muted);
+    opacity:    1;
+}
+
+.eww-saving-indicator--hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+@keyframes eww-pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.5; }
+}
+
+.eww-saving-indicator--saving .eww-saving-indicator__dot {
+    width:            6px;
+    height:           6px;
+    border-radius:    50%;
+    background:       var(--eww-color-saving-text);
+    animation:        eww-pulse 1s ease-in-out infinite;
+    flex-shrink:      0;
+}
+
+/* ── 9. Handsontable Overrides ─────────────────────────────────────────────── */
+
+/* Make Handsontable fill its container */
+.eww-grid-wrapper .handsontable {
+    font-family: var(--eww-font-family);
+    font-size:   var(--eww-font-size);
+}
+
+/* Tighten up the default HT cell padding slightly */
+.eww-grid-wrapper .htCore td,
+.eww-grid-wrapper .htCore th {
+    padding: 2px 5px;
+}
+
+/* Style the column header to match our theme */
+.eww-grid-wrapper .ht_master thead th {
+    background: var(--eww-color-surface);
+    color:      var(--eww-color-text-muted);
+    font-weight: 500;
+    border-color: var(--eww-color-border);
+}
+
+/* Make sure read-only cells are visually distinct */
+.eww-grid-wrapper .htCore td.htDimmed {
+    color:      var(--eww-color-text-muted);
+    background: var(--eww-color-surface);
+}
+
+/* Current cell border */
+.eww-grid-wrapper .htCore td.current {
+    outline: 2px solid var(--eww-color-primary);
+    outline-offset: -2px;
+}
+
+/* Selection fill color */
+.eww-grid-wrapper .htCore td.area {
+    background: rgba(26, 115, 232, 0.08);
+}
+
+/* ── 10. Utility Classes ───────────────────────────────────────────────────── */
+
+.eww-sr-only {
+    position: absolute;
+    width:    1px;
+    height:   1px;
+    padding:  0;
+    margin:   -1px;
+    overflow: hidden;
+    clip:     rect(0, 0, 0, 0);
+    border:   0;
+}
