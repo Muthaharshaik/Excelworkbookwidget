@@ -1,241 +1,285 @@
 /**
- * WorkbookContainer.jsx - Step A
- * Clean version — no HyperFormula, no CDN, no themes, no permissions panel.
+ * WorkbookContainer.jsx
+ *
+ * NEW ARCHITECTURE (single sheet per widget instance):
+ *   - Widget sits inside DataView of Spreadsheet entity
+ *   - Reads ONE sheet's data from sheetJson attribute
+ *   - Writes cell changes back to sheetJson via setValue()
+ *   - Mendix ListView handles sheet tabs (Sheet1, Sheet2...)
+ *   - No sheet add/delete/rename in widget — Mendix owns that
+ *
+ * DATA FLOW:
+ *   Mendix DataView(Spreadsheet) → sheetJson prop
+ *     → parseSheetJson() → grid data
+ *       → user edits cell
+ *         → serializeSheet() → setValue(newJson)
+ *           → onSheetChange.execute() → Mendix commits
  */
 
-import { createElement, useRef, useCallback, useState } from "react";
-
-import { useWorkbookState }    from "../hooks/useWorkbookState";
-import { useAutoSave }         from "../hooks/useAutoSave";
-import { usePermissions }      from "../hooks/usePermissions";
+import { createElement, useRef, useCallback, useState, useEffect } from "react";
 
 import { SheetGrid }           from "./SheetGrid";
-import { SheetTabBar }         from "./SheetTabBar";
 import { Toolbar }             from "./Toolbar";
-import { ReadOnlyBadge }       from "./ReadOnlyBadge";
 import { ColumnSettingsPanel } from "./ColumnSettingsPanel";
+import { ReadOnlyBadge }       from "./ReadOnlyBadge";
 
-import {
-    updateSheetData, updateSheetMeta, updateSheetDimensions,
-    addSheet, deleteSheet, renameSheet,
-    addColumn, updateColumn, deleteColumn, reorderColumn,
-} from "../services/dataService";
-import { CSS }                   from "../utils/constants";
-import { triggerSheetTabChange } from "../services/mendixBridge";
+import { parseSheetJson, serializeSheet } from "../services/dataService";
+import { triggerSheetChange }             from "../services/mendixBridge";
+import { CSS, AUTOSAVE_DEBOUNCE_MS }      from "../utils/constants";
 
 export function WorkbookContainer(props) {
     const {
-        workbookId,
-        workbookName,
-        sheetsJson,
-        isReadOnly,
+        sheetId,
+        sheetName,
+        sheetJson,
+        currentUserId,
+        accessUserId,
+        permissionType,
         isAdmin,
         onSheetChange,
-        onSheetTabChange,
-        gridHeight         = 600,
-        showToolbar        = true,
-        showWorkbookHeader = true,
-        rowHeaders         = true,
-        colHeaders         = true,
+        gridHeight     = 600,
+        rowCount       = 50,
+        showToolbar    = true,
+        showSheetName  = true,
+        rowHeaders     = true,
+        colHeaders     = true,
     } = props;
 
-    // ── Resolve Mendix datasource attributes ──────────────────────────────
-    const workbookItem     = props.workbookSource?.items?.[0];
-    const sheetsJsonAttr   = workbookItem && sheetsJson   ? sheetsJson.get(workbookItem)   : sheetsJson;
-    const isReadOnlyAttr   = workbookItem && isReadOnly   ? isReadOnly.get(workbookItem)   : isReadOnly;
-    const workbookIdAttr   = workbookItem && workbookId   ? workbookId.get(workbookItem)   : workbookId;
-    const workbookNameAttr = workbookItem && workbookName ? workbookName.get(workbookItem) : workbookName;
-    const isAdminAttr      = workbookItem && isAdmin      ? isAdmin.get(workbookItem)      : isAdmin;
+    // ── Resolve Mendix attribute / expression values ───────────────────────
+    const sheetIdValue      = resolveAttr(sheetId)       ?? "";
+    const sheetNameValue    = resolveAttr(sheetName)     ?? "Sheet";
+    const sheetJsonValue    = resolveAttr(sheetJson);
+    const isAdminValue      = resolveAttr(isAdmin)       ?? false;
+    const currentUserValue  = resolveAttr(currentUserId) ?? "";
+    const accessUserValue   = resolveAttr(accessUserId)  ?? "";
+    const permissionValue   = resolveAttr(permissionType)?? "View";
 
-    const sheetsJsonValue   = resolveAttr(sheetsJsonAttr);
-    const isReadOnlyValue   = resolveAttr(isReadOnlyAttr)   ?? false;
-    const workbookIdValue   = resolveAttr(workbookIdAttr)   ?? "";
-    const workbookNameValue = resolveAttr(workbookNameAttr) ?? "Workbook";
-    const isAdminValue      = resolveAttr(isAdminAttr)      ?? false;
+    // ── Resolve access level ───────────────────────────────────────────────
+    // Step 1: isAdmin → full access immediately, no further checks
+    // Step 2: Verify the WorkBookAccess record belongs to the current user
+    //         (compare currentUserId with accessUserId from the record)
+    // Step 3: If match → apply PermissionType (Edit = cells, View = readonly)
+    // Step 4: No match / missing → read only (safe default)
+    const isUserMatch  = currentUserValue
+        && accessUserValue
+        && currentUserValue.trim() === accessUserValue.trim();
 
-    // ── UI state ──────────────────────────────────────────────────────────
-    const [showColumnPanel, setShowColumnPanel] = useState(false);
-    const hotRef = useRef(null);
+    const canEditCells   = isAdminValue || (isUserMatch && permissionValue === "Edit");
+    const canEditColumns = isAdminValue;
 
-    // ── Core state ─────────────────────────────────────────────────────────
-    const {
-        sheets,
-        setSheets,
-        activeSheet,
-        activeSheetIndex,
-        setActiveSheetIndex,
-        isLoading,
-        parseError,
-        markPendingEdits,
-        clearPendingEdits,
-    } = useWorkbookState(sheetsJsonValue);
-
-    // ── Permissions ────────────────────────────────────────────────────────
-    const { canEditSheet } = usePermissions(isReadOnlyValue);
-
-    // ── Auto-save ──────────────────────────────────────────────────────────
-    const { savingStatus } = useAutoSave({
-        sheets,
-        onSheetChange,
-        sheetsJson: sheetsJsonAttr,
-        clearPendingEdits,
+    // ── DEBUG (remove after testing) ──────────────────────────────────────
+    console.info("[ExcelWidget] Access Debug:", {
+        currentUserValue,
+        accessUserValue,
+        permissionValue,
+        isAdminValue,
+        isUserMatch,
+        canEditCells,
+        canEditColumns,
     });
 
-    // ── Handlers ──────────────────────────────────────────────────────────
-    const handleCellChange = useCallback((sheetId, newData) => {
-        markPendingEdits();
-        setSheets(prev => updateSheetData(prev, sheetId, newData));
-    }, [markPendingEdits, setSheets]);
+    // ── Parse sheet data from JSON ─────────────────────────────────────────
+    // sheetJson contains cell data + column definitions for this sheet
+    const [sheetData, setSheetData] = useState(() => parseSheetJson(sheetJsonValue, rowCount));
+    const [savingStatus, setSavingStatus] = useState("idle"); // "idle"|"saving"|"saved"
+    const [showColumnPanel, setShowColumnPanel] = useState(false);
 
-    const handleMetaChange = useCallback((sheetId, newMeta) => {
-        markPendingEdits();
-        setSheets(prev => updateSheetMeta(prev, sheetId, newMeta));
-    }, [markPendingEdits, setSheets]);
+    const hotRef        = useRef(null);
+    const debounceTimer = useRef(null);
+    const savedTimer    = useRef(null);
+    const isFirstLoad   = useRef(true);
 
-    const handleDimensionChange = useCallback((sheetId, dimensions) => {
-        markPendingEdits();
-        setSheets(prev => updateSheetDimensions(prev, sheetId, dimensions));
-    }, [markPendingEdits, setSheets]);
+    // ── Re-parse when Mendix sends new sheetJson (e.g. user clicks diff sheet)
+    useEffect(() => {
+        const parsed = parseSheetJson(sheetJsonValue, rowCount);
+        setSheetData(parsed);
+        isFirstLoad.current = true; // reset so tab switch doesn't trigger save
+    }, [sheetIdValue]); // re-parse when sheet ID changes (user clicked different tab)
 
-    const handleAddSheet = useCallback(() => {
-        markPendingEdits();
-        setSheets(prev => addSheet(prev));
-        setActiveSheetIndex(sheets.length);
-    }, [markPendingEdits, setSheets, setActiveSheetIndex, sheets.length]);
+    // ── Auto-save when sheetData changes ──────────────────────────────────
+    useEffect(() => {
+        if (isFirstLoad.current) {
+            isFirstLoad.current = false;
+            return;
+        }
 
-    const handleDeleteSheet = useCallback((sheetId) => {
-        markPendingEdits();
-        setSheets(prev => deleteSheet(prev, sheetId));
-        setActiveSheetIndex(Math.max(0, activeSheetIndex - 1));
-    }, [markPendingEdits, setSheets, setActiveSheetIndex, activeSheetIndex]);
+        setSavingStatus("saving");
+        clearTimeout(debounceTimer.current);
 
-    const handleRenameSheet = useCallback((sheetId, newName) => {
-        markPendingEdits();
-        setSheets(prev => renameSheet(prev, sheetId, newName));
-    }, [markPendingEdits, setSheets]);
+        debounceTimer.current = setTimeout(() => {
+            performSave();
+        }, AUTOSAVE_DEBOUNCE_MS);
 
-    const handleAddColumn = useCallback((sheetId) => {
-        markPendingEdits();
-        setSheets(prev => addColumn(prev, sheetId));
-    }, [markPendingEdits, setSheets]);
+        return () => clearTimeout(debounceTimer.current);
+    }, [sheetData]);
 
-    const handleUpdateColumn = useCallback((sheetId, colKey, changes) => {
-        markPendingEdits();
-        setSheets(prev => updateColumn(prev, sheetId, colKey, changes));
-    }, [markPendingEdits, setSheets]);
+    // ── Cleanup timers on unmount ──────────────────────────────────────────
+    useEffect(() => {
+        return () => {
+            clearTimeout(debounceTimer.current);
+            clearTimeout(savedTimer.current);
+        };
+    }, []);
 
-    const handleDeleteColumn = useCallback((sheetId, colKey) => {
-        markPendingEdits();
-        setSheets(prev => deleteColumn(prev, sheetId, colKey));
-    }, [markPendingEdits, setSheets]);
+    // ── Save ──────────────────────────────────────────────────────────────
+    const performSave = useCallback(() => {
+        try {
+            const newJson = serializeSheet(sheetData);
+            const success = triggerSheetChange(sheetJson, newJson, onSheetChange);
 
-    const handleReorderColumn = useCallback((sheetId, fromIndex, toIndex) => {
-        markPendingEdits();
-        setSheets(prev => reorderColumn(prev, sheetId, fromIndex, toIndex));
-    }, [markPendingEdits, setSheets]);
+            if (!success) {
+                setSavingStatus("idle");
+                return;
+            }
 
-    const handleTabChange = useCallback((index) => {
-        setActiveSheetIndex(index);
-        triggerSheetTabChange(onSheetTabChange);
-    }, [setActiveSheetIndex, onSheetTabChange]);
+            setSavingStatus("saved");
+            clearTimeout(savedTimer.current);
+            savedTimer.current = setTimeout(() => setSavingStatus("idle"), 2000);
 
-    // ── Render: error ──────────────────────────────────────────────────────
-    if (parseError) {
-        return (
-            <div className={CSS.WORKBOOK_ROOT} style={styles.errorBox}>
-                ⚠ Failed to load workbook data. Please check the sheetsJson configuration.
-                <br />
-                <small style={{ color: "#999", marginTop: 4, display: "block" }}>{parseError}</small>
-            </div>
-        );
-    }
+        } catch (err) {
+            console.error("[ExcelWidget] Auto-save failed:", err.message);
+            setSavingStatus("idle");
+        }
+    }, [sheetData, sheetJson, onSheetChange]);
 
-    // ── Render: loading ────────────────────────────────────────────────────
-    if (isLoading) {
-        return (
-            <div className={CSS.WORKBOOK_ROOT} style={styles.loadingBox}>
-                <div style={styles.spinner} />
-                <span>Loading workbook…</span>
-            </div>
-        );
-    }
+    // ── Cell change handler ────────────────────────────────────────────────
+    const handleCellChange = useCallback((newData) => {
+        setSheetData(prev => ({ ...prev, data: newData }));
+    }, []);
 
-    // ── Render: empty ──────────────────────────────────────────────────────
-    if (!sheets.length) {
-        return (
-            <div className={CSS.WORKBOOK_ROOT} style={styles.emptyBox}>
-                <span style={styles.emptyIcon}>📋</span>
-                <span>No sheets found in this workbook.</span>
-                <small style={{ color: "#999" }}>
-                    Ask your administrator to configure sheets for this workbook.
-                </small>
-            </div>
-        );
-    }
+    // ── Meta change handler (formatting) ──────────────────────────────────
+    const handleMetaChange = useCallback((newMeta) => {
+        setSheetData(prev => ({ ...prev, cellMeta: newMeta }));
+    }, []);
 
-    const activeSheetEditable = activeSheet ? canEditSheet(activeSheet.isEditable) : false;
+    // ── Dimension change handler ───────────────────────────────────────────
+    const handleDimensionChange = useCallback((dimensions) => {
+        setSheetData(prev => ({ ...prev, ...dimensions }));
+    }, []);
+
+    // ── Column handlers (admin only) ───────────────────────────────────────
+    const handleAddColumn = useCallback(() => {
+        setSheetData(prev => {
+            const cols     = prev.columns || [];
+            const newCol   = {
+                key:      `col-${Date.now()}`,
+                header:   `Column ${cols.length + 1}`,
+                type:     "text",
+                width:    120,
+                source:   [],
+                format:   "",
+                readOnly: false,
+            };
+            const newData  = (prev.data || []).map(row => [...row, null]);
+            return { ...prev, columns: [...cols, newCol], data: newData };
+        });
+    }, []);
+
+    const handleUpdateColumn = useCallback((colKey, changes) => {
+        setSheetData(prev => ({
+            ...prev,
+            columns: (prev.columns || []).map(c =>
+                c.key === colKey ? { ...c, ...changes } : c
+            ),
+        }));
+    }, []);
+
+    const handleDeleteColumn = useCallback((colKey) => {
+        setSheetData(prev => {
+            const idx      = (prev.columns || []).findIndex(c => c.key === colKey);
+            if (idx === -1) return prev;
+            const newCols  = prev.columns.filter(c => c.key !== colKey);
+            const newData  = (prev.data || []).map(row => {
+                const r = [...row];
+                r.splice(idx, 1);
+                return r;
+            });
+            return { ...prev, columns: newCols, data: newData };
+        });
+    }, []);
+
+    const handleReorderColumn = useCallback((fromIndex, toIndex) => {
+        setSheetData(prev => {
+            const cols = [...(prev.columns || [])];
+            const [moved] = cols.splice(fromIndex, 1);
+            cols.splice(toIndex, 0, moved);
+            const newData = (prev.data || []).map(row => {
+                const r = [...row];
+                const [movedCell] = r.splice(fromIndex, 1);
+                r.splice(toIndex, 0, movedCell);
+                return r;
+            });
+            return { ...prev, columns: cols, data: newData };
+        });
+    }, []);
+
+    // ── Build sheet object for SheetGrid ──────────────────────────────────
+    const sheet = {
+        sheetId:     sheetIdValue,
+        sheetName:   sheetNameValue,
+        isEditable:  canEditCells,
+        data:        sheetData.data        || [],
+        columns:     sheetData.columns     || [],
+        cellMeta:    sheetData.cellMeta    || {},
+        colWidths:   sheetData.colWidths   || [],
+        rowHeights:  sheetData.rowHeights  || [],
+        mergedCells: sheetData.mergedCells || [],
+    };
 
     return (
         <div className={CSS.WORKBOOK_ROOT}>
 
-            {showWorkbookHeader && (
+            {/* ── Sheet name header ─────────────────────────────────── */}
+            {showSheetName && (
                 <div className={CSS.HEADER}>
-                    <span className="eww-header__title">📊 {workbookNameValue}</span>
+                    <span className="eww-header__title">
+                        📄 {sheetNameValue}
+                    </span>
                     <div className="eww-header__meta">
                         <SavingIndicator status={savingStatus} />
-                        {!activeSheetEditable && activeSheet && <ReadOnlyBadge />}
+                        {!canEditCells && <ReadOnlyBadge />}
                     </div>
                 </div>
             )}
 
+            {/* ── Toolbar ───────────────────────────────────────────── */}
             {showToolbar && (
                 <Toolbar
                     hotRef={hotRef}
-                    activeSheet={activeSheet}
-                    onMetaChange={handleMetaChange}
-                    disabled={!activeSheetEditable}
-                    isAdmin={isAdminValue}
+                    activeSheet={sheet}
+                    onMetaChange={(_, newMeta) => handleMetaChange(newMeta)}
+                    disabled={!canEditCells}
+                    isAdmin={canEditColumns}
                     onOpenColumnSettings={() => setShowColumnPanel(true)}
                 />
             )}
 
+            {/* ── Grid ──────────────────────────────────────────────── */}
             <div className={CSS.GRID_WRAPPER}>
-                {activeSheet && (
-                    <SheetGrid
-                        key={activeSheet.sheetId}
-                        sheet={activeSheet}
-                        isEditable={activeSheetEditable}
-                        isAdmin={isAdminValue}
-                        height={gridHeight}
-                        rowHeaders={rowHeaders}
-                        colHeaders={colHeaders}
-                        hotRef={hotRef}
-                        onCellChange={handleCellChange}
-                        onMetaChange={handleMetaChange}
-                        onDimensionChange={handleDimensionChange}
-                    />
-                )}
+                <SheetGrid
+                    key={sheetIdValue}
+                    sheet={sheet}
+                    isEditable={canEditCells}
+                    isAdmin={canEditColumns}
+                    height={gridHeight}
+                    rowHeaders={rowHeaders}
+                    colHeaders={colHeaders}
+                    hotRef={hotRef}
+                    onCellChange={(_, newData) => handleCellChange(newData)}
+                    onMetaChange={(_, newMeta) => handleMetaChange(newMeta)}
+                    onDimensionChange={(_, dims) => handleDimensionChange(dims)}
+                />
             </div>
 
-            <SheetTabBar
-                sheets={sheets}
-                activeIndex={activeSheetIndex}
-                isWorkbookEditable={!isReadOnlyValue}
-                canEditSheet={canEditSheet}
-                onTabChange={handleTabChange}
-                onAddSheet={handleAddSheet}
-                onDeleteSheet={handleDeleteSheet}
-                onRenameSheet={handleRenameSheet}
-            />
-
-            {showColumnPanel && isAdminValue && (
+            {/* ── Column settings panel (admin only) ────────────────── */}
+            {showColumnPanel && canEditColumns && (
                 <ColumnSettingsPanel
-                    sheet={activeSheet}
-                    isAdmin={isAdminValue}
-                    onAddColumn={handleAddColumn}
-                    onUpdateColumn={handleUpdateColumn}
-                    onDeleteColumn={handleDeleteColumn}
-                    onReorderColumn={handleReorderColumn}
+                    sheet={sheet}
+                    isAdmin={canEditColumns}
+                    onAddColumn={() => handleAddColumn()}
+                    onUpdateColumn={(_, colKey, changes) => handleUpdateColumn(colKey, changes)}
+                    onDeleteColumn={(_, colKey) => handleDeleteColumn(colKey)}
+                    onReorderColumn={(_, from, to) => handleReorderColumn(from, to)}
                     onClose={() => setShowColumnPanel(false)}
                 />
             )}
@@ -243,6 +287,8 @@ export function WorkbookContainer(props) {
         </div>
     );
 }
+
+// ── SavingIndicator ───────────────────────────────────────────────────────────
 
 function SavingIndicator({ status }) {
     if (status === "idle") return null;
@@ -263,6 +309,8 @@ function SavingIndicator({ status }) {
     );
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
 function resolveAttr(prop) {
     if (prop === null || prop === undefined) return undefined;
     if (typeof prop === "object" && "status" in prop) {
@@ -270,11 +318,3 @@ function resolveAttr(prop) {
     }
     return prop;
 }
-
-const styles = {
-    errorBox:   { padding: 16, background: "#fce8e6", border: "1px solid #f5c6c6", borderRadius: 6, color: "#c5221f", fontSize: 13 },
-    loadingBox: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, padding: 40, color: "#5f6368", fontSize: 14 },
-    emptyBox:   { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: 48, color: "#5f6368", fontSize: 13 },
-    emptyIcon:  { fontSize: 32 },
-    spinner:    { width: 28, height: 28, border: "3px solid #e0e0e0", borderTopColor: "#1a73e8", borderRadius: "50%", animation: "eww-spin 0.75s linear infinite" },
-};

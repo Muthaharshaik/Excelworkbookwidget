@@ -415,3 +415,16 @@
     clip:     rect(0, 0, 0, 0);
     border:   0;
 }
+
+
+.ht_clone_top.handsontable {
+    z-index: 20 !important;
+}
+
+.ht_clone_inline_start.ht_clone_left.handsontable {
+    z-index: 18 !important;
+}
+
+.ht_clone_top_inline_start_corner.ht_clone_top_left_corner.handsontable {
+    z-index: 22 !important;
+}

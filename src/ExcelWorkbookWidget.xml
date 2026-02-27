@@ -2,7 +2,7 @@
 <widget
     id="lowcodelabs.excelworkbookwidget.ExcelWorkbookWidget"
     pluginWidget="true"
-    needsEntityContext="false"
+    needsEntityContext="true"
     offlineCapable="false"
     supportedPlatform="Web"
     xmlns="http://www.mendix.com/widget/1.0/"
@@ -11,87 +11,41 @@
 
     <name>Excel Workbook Widget</name>
     <description>
-        Enterprise-grade Excel-like spreadsheet widget with multi-sheet support,
-        formula engine, role-based access control, and auto-save.
+        Excel-like spreadsheet widget. Place inside a DataView of the
+        Spreadsheet entity. Reads and writes cell data via sheetJson attribute.
     </description>
     <icon/>
 
     <properties>
 
-        <!-- ═══════════════════════════════════════════════════════
-             1. WORKBOOK DATA SOURCE
-             Points directly to the Workbook entity.
-             No DataView needed — widget has its own datasource.
-        ════════════════════════════════════════════════════════ -->
-        <propertyGroup caption="Workbook Data Source">
+        <!-- ═══════════════════════════════════════════
+             1. SHEET DATA
+             Widget must be inside DataView of Spreadsheet entity.
+        ════════════════════════════════════════════ -->
+        <propertyGroup caption="Sheet Data">
 
-            <property key="workbookSource" type="datasource" isList="true" required="true">
-                <caption>Workbook Source</caption>
-                <description>
-                    Select the Workbook entity. The widget reads all workbook
-                    and sheet data directly from here. No DataView required.
-                </description>
-            </property>
-
-            <property key="workbookId" type="attribute" dataSource="workbookSource" required="false">
-                <caption>Workbook ID</caption>
-                <description>Map to Workbook.WorkbookId (String)</description>
+            <property key="sheetId" type="attribute" required="false">
+                <caption>Sheet ID</caption>
+                <description>Map to Spreadsheet.sheetId (String)</description>
                 <attributeTypes>
                     <attributeType name="String"/>
                 </attributeTypes>
             </property>
 
-            <property key="workbookName" type="attribute" dataSource="workbookSource" required="false">
-                <caption>Workbook Name</caption>
-                <description>Map to Workbook.Name (String)</description>
+            <property key="sheetName" type="attribute" required="false">
+                <caption>Sheet Name</caption>
+                <description>Map to Spreadsheet.sheetName (String)</description>
                 <attributeTypes>
                     <attributeType name="String"/>
                 </attributeTypes>
             </property>
 
-            <property key="sheetsJson" type="attribute" dataSource="workbookSource" required="true">
-                <caption>Sheets JSON</caption>
+            <property key="sheetJson" type="attribute" required="true">
+                <caption>Sheet JSON</caption>
                 <description>
-                    Map to Workbook.SheetsJson (LongString). Contains all sheets
-                    and their cell data as a JSON array. Widget parses and renders
-                    all sheets. On every cell change the widget serializes the
-                    updated sheet back and fires onSheetChange.
-                </description>
-                <attributeTypes>
-                    <attributeType name="String"/>
-                </attributeTypes>
-            </property>
-
-            <property key="isReadOnly" type="attribute" dataSource="workbookSource" required="false">
-                <caption>Is Read Only</caption>
-                <description>
-                    Map to Workbook.IsReadOnly (Boolean). When true, the entire
-                    workbook is locked. Per-sheet access is controlled via
-                    isEditable inside sheetsJson.
-                </description>
-                <attributeTypes>
-                    <attributeType name="Boolean"/>
-                </attributeTypes>
-            </property>
-
-            <property key="isAdmin" type="attribute" dataSource="workbookSource" required="false">
-                <caption>Is Admin</caption>
-                <description>
-                    Map to Workbook.IsAdmin (Boolean). When true, the user sees
-                    the column settings panel to add/edit/delete column headers
-                    and data types. Regular users never see this panel.
-                    Compute this in Mendix based on the user's role.
-                </description>
-                <attributeTypes>
-                    <attributeType name="Boolean"/>
-                </attributeTypes>
-            </property>
-
-            <property key="currentUserId" type="attribute" dataSource="workbookSource" required="false">
-                <caption>Current User ID</caption>
-                <description>
-                    Map to Workbook.CurrentUserId (String). Included in save
-                    payloads for audit trail tracking.
+                    Map to Spreadsheet.sheetJson (String, Unlimited length).
+                    Stores cell data for this sheet as JSON.
+                    Widget writes updated JSON back here on every cell change.
                 </description>
                 <attributeTypes>
                     <attributeType name="String"/>
@@ -100,70 +54,107 @@
 
         </propertyGroup>
 
-        <!-- ═══════════════════════════════════════════════════════
-             4. ACTIONS
-             Mendix microflows wired here handle DB persistence.
-             The widget fires these; Mendix handles the actual commit.
-        ════════════════════════════════════════════════════════ -->
+        <!-- ═══════════════════════════════════════════
+             2. ACCESS CONTROL
+        ════════════════════════════════════════════ -->
+        <propertyGroup caption="Access Control">
+
+            <property key="currentUserId" type="expression" required="false" defaultValue="''">
+                <caption>Current User ID</caption>
+                <description>
+                    Expression returning the current logged-in user's ID.
+                    Example: toString($currentUser)
+                    Used to verify the WorkBookAccess record belongs to this user.
+                </description>
+                <returnType type="String"/>
+            </property>
+
+            <property key="accessUserId" type="expression" required="false" defaultValue="''">
+                <caption>Access Record User ID</caption>
+                <description>
+                    Expression returning the user ID from the WorkBookAccess record.
+                    Example: toString($currentObject/WorkBookAccess_Account)
+                    Widget compares this with Current User ID to verify ownership.
+                </description>
+                <returnType type="String"/>
+            </property>
+
+            <property key="permissionType" type="expression" required="false" defaultValue="'View'">
+                <caption>Permission Type</caption>
+                <description>
+                    Expression returning the permission from WorkBookAccess.
+                    Example: toString($currentObject/PermissionType)
+                    Expected values: "Edit" or "View"
+                    Only applied if Current User ID matches Access Record User ID.
+                </description>
+                <returnType type="String"/>
+            </property>
+
+            <property key="isAdmin" type="expression" required="false" defaultValue="false">
+                <caption>Is Admin</caption>
+                <description>
+                    Expression returning true if current user is an admin.
+                    Example: $currentUser/IsAdmin
+                    Admins get full access — overrides permissionType completely.
+                </description>
+                <returnType type="Boolean"/>
+            </property>
+
+        </propertyGroup>
+
+        <!-- ═══════════════════════════════════════════
+             2. ACTIONS
+        ════════════════════════════════════════════ -->
         <propertyGroup caption="Actions">
 
             <property key="onSheetChange" type="action" required="false">
                 <caption>On Sheet Change (Auto-Save)</caption>
                 <description>
-                    Fired automatically after every cell edit (debounced 800ms).
-                    Wire this to a microflow that reads the updated sheetsJson
-                    attribute and commits the Sheet + SheetData objects to the DB.
-                    This is the ONLY save mechanism — there is no manual Save button.
-                </description>
-            </property>
-
-            <property key="onSheetTabChange" type="action" required="false">
-                <caption>On Sheet Tab Change</caption>
-                <description>
-                    Optional. Fired when the user switches to a different sheet tab.
-                    Wire this if Mendix needs to track which sheet is currently active.
+                    Fired after every cell edit (debounced 800ms).
+                    Widget writes new JSON to sheetJson attribute first,
+                    then calls this action. Wire to a microflow that
+                    commits the Spreadsheet object.
                 </description>
             </property>
 
         </propertyGroup>
 
-        <!-- ═══════════════════════════════════════════════════════
-             5. DISPLAY SETTINGS
-             Visual configuration for the widget.
-        ════════════════════════════════════════════════════════ -->
+        <!-- ═══════════════════════════════════════════
+             3. DISPLAY SETTINGS
+        ════════════════════════════════════════════ -->
         <propertyGroup caption="Display Settings">
 
             <property key="gridHeight" type="integer" defaultValue="600">
                 <caption>Grid Height (px)</caption>
+                <description>Height of the spreadsheet grid in pixels.</description>
+            </property>
+
+            <property key="rowCount" type="integer" defaultValue="50">
+                <caption>Row Count</caption>
                 <description>
-                    Height of the spreadsheet grid area in pixels. Default: 600.
-                    Does not include the toolbar or tab bar height.
+                    Number of rows to show in the grid.
+                    Admin configures this per sheet. Default is 50.
                 </description>
             </property>
 
             <property key="showToolbar" type="boolean" defaultValue="true">
                 <caption>Show Formatting Toolbar</caption>
-                <description>
-                    Show the formatting toolbar (bold, italic, colors, borders, merge).
-                    Toolbar is automatically hidden when the active sheet is read-only.
-                </description>
+                <description>Show bold, italic, color, merge toolbar.</description>
             </property>
 
-            <property key="showWorkbookHeader" type="boolean" defaultValue="true">
-                <caption>Show Workbook Name Header</caption>
-                <description>
-                    Show the workbook name in a header bar above the grid.
-                </description>
+            <property key="showSheetName" type="boolean" defaultValue="true">
+                <caption>Show Sheet Name Header</caption>
+                <description>Show sheet name above the grid.</description>
             </property>
 
             <property key="rowHeaders" type="boolean" defaultValue="true">
                 <caption>Show Row Numbers</caption>
-                <description>Show row number headers on the left (1, 2, 3…)</description>
+                <description>Show row numbers on the left (1, 2, 3…)</description>
             </property>
 
             <property key="colHeaders" type="boolean" defaultValue="true">
                 <caption>Show Column Letters</caption>
-                <description>Show column letter headers on top (A, B, C…)</description>
+                <description>Show column letters on top (A, B, C…)</description>
             </property>
 
         </propertyGroup>
