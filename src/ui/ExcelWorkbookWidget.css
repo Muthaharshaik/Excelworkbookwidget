@@ -114,16 +114,30 @@
     flex-shrink: 0;
 }
 
-/* ── ADD THESE CLASSES to ExcelWorkbookWidget.css ──────────────────────────
-   Paste inside the .eww-root scope, e.g. after the "3. Workbook Header" block
+/* ── ADD THESE TO ExcelWorkbookWidget.css ───────────────────────────────────
+   Paste after the existing "3. Workbook Header" block inside .eww-root scope
    ─────────────────────────────────────────────────────────────────────────── */
 
-/* Header layout — left group holds icon + name + config button */
+/* ── Panel slide-in animation ───────────────────────────────────────────── */
+
+@keyframes eww-slideIn {
+    from {
+        opacity:   0;
+        transform: translateX(12px) scale(0.98);
+    }
+    to {
+        opacity:   1;
+        transform: translateX(0) scale(1);
+    }
+}
+
+/* ── Header layout ───────────────────────────────────────────────────────── */
+
 .eww-header__left {
     display:     flex;
     align-items: center;
     gap:         8px;
-    min-width:   0;         /* allows text-overflow to work inside */
+    min-width:   0;
     flex:        1;
 }
 
@@ -132,93 +146,150 @@
     flex-shrink: 0;
 }
 
-/* ── Column Config Button ────────────────────────────────────────────────── */
+.eww-header__config-group {
+    display:     flex;
+    align-items: center;
+    gap:         4px;
+    flex-shrink: 0;
+}
+
+/* ── Column / Row config buttons ─────────────────────────────────────────── */
 
 .eww-col-config-btn {
     display:       inline-flex;
     align-items:   center;
     gap:           5px;
-    padding:       3px 10px 3px 8px;
-    background:    var(--eww-color-surface);
-    border:        1px solid var(--eww-color-border);
-    border-radius: 6px;
+    padding:       4px 10px 4px 8px;
+    background:    #f8fafc;
+    border:        1px solid #e2e8f0;
+    border-radius: 7px;
     cursor:        pointer;
     font-family:   var(--eww-font-family);
     font-size:     12px;
     font-weight:   500;
-    color:         var(--eww-color-text-muted);
+    color:         #64748b;
     white-space:   nowrap;
     flex-shrink:   0;
-    transition:    background 0.15s, border-color 0.15s, color 0.15s;
-    line-height:   1;
+    transition:    all 0.15s ease;
+    letter-spacing: 0.01em;
 }
 
 .eww-col-config-btn:hover {
-    background:   var(--eww-color-tab-hover);
-    border-color: var(--eww-color-border-dark);
-    color:        var(--eww-color-text);
+    background:    #f1f5f9;
+    border-color:  #cbd5e1;
+    color:         #334155;
+    box-shadow:    0 1px 4px rgba(15,23,42,0.06);
 }
 
-/* Active state: custom columns ARE configured */
 .eww-col-config-btn--active {
-    background:   #e8f0fe;
-    border-color: #c5d8fb;
-    color:        var(--eww-color-primary);
+    background:    #eff6ff;
+    border-color:  #bfdbfe;
+    color:         #2563eb;
+    box-shadow:    0 1px 4px rgba(37,99,235,0.12);
 }
 
 .eww-col-config-btn--active:hover {
-    background:   #d2e3fc;
-    border-color: #adc6f5;
+    background:    #dbeafe;
+    border-color:  #93c5fd;
 }
 
 .eww-col-config-btn__icon {
     font-size:   13px;
     flex-shrink: 0;
+    line-height: 1;
 }
 
 .eww-col-config-btn__label {
     font-size: 12px;
+    line-height: 1;
 }
 
-/* Small count badge — shown only when columns are configured */
 .eww-col-config-btn__badge {
     display:         inline-flex;
     align-items:     center;
     justify-content: center;
-    min-width:       16px;
-    height:          16px;
-    padding:         0 4px;
-    background:      var(--eww-color-primary);
+    min-width:       17px;
+    height:          17px;
+    padding:         0 5px;
+    background:      #2563eb;
     color:           #fff;
-    border-radius:   8px;
+    border-radius:   20px;
     font-size:       10px;
-    font-weight:     600;
+    font-weight:     700;
     line-height:     1;
     flex-shrink:     0;
 }
 
-/* ── Row Config Button — green accent to distinguish from column button ───── */
-
-.eww-header__config-group {
-    display:    flex;
-    align-items: center;
-    gap:        4px;
-    flex-shrink: 0;
-}
+/* Row config button — green accent */
 
 .eww-row-config-btn--active {
-    background:   #e6f4ea !important;
-    border-color: #b7dfbe !important;
-    color:        #1e7e34 !important;
+    background:    #f0fdf4 !important;
+    border-color:  #a7f3d0 !important;
+    color:         #059669 !important;
+    box-shadow:    0 1px 4px rgba(5,150,105,0.12) !important;
 }
 
 .eww-row-config-btn--active:hover {
-    background:   #ceead6 !important;
-    border-color: #93c49d !important;
+    background:    #dcfce7 !important;
+    border-color:  #6ee7b7 !important;
 }
 
 .eww-row-config-btn__badge {
-    background: #1e7e34 !important;
+    background: #059669 !important;
+}
+
+/* ── Saving Indicator — redesigned ──────────────────────────────────────── */
+
+.eww-save-indicator {
+    display:       inline-flex;
+    align-items:   center;
+    gap:           6px;
+    padding:       4px 10px;
+    border-radius: 20px;
+    font-size:     11px;
+    font-weight:   600;
+    letter-spacing: 0.02em;
+    transition:    all 0.25s ease;
+    flex-shrink:   0;
+}
+
+.eww-save-indicator--saving {
+    background: #fff7ed;
+    color:      #c2410c;
+    border:     1px solid #fed7aa;
+    animation:  eww-savePulse 1.4s ease-in-out infinite;
+}
+
+.eww-save-indicator--saved {
+    background: #f0fdf4;
+    color:      #15803d;
+    border:     1px solid #bbf7d0;
+    animation:  eww-saveFadeIn 0.3s ease;
+}
+
+/* Spinner for saving state */
+.eww-save-indicator__spinner {
+    width:         10px;
+    height:        10px;
+    border:        2px solid #fed7aa;
+    border-top:    2px solid #c2410c;
+    border-radius: 50%;
+    flex-shrink:   0;
+    animation:     eww-spin 0.7s linear infinite;
+}
+
+@keyframes eww-spin {
+    to { transform: rotate(360deg); }
+}
+
+@keyframes eww-savePulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.7; }
+}
+
+@keyframes eww-saveFadeIn {
+    from { opacity: 0; transform: scale(0.92); }
+    to   { opacity: 1; transform: scale(1);    }
 }
 
 /* ── 4. Toolbar ────────────────────────────────────────────────────────────── */
