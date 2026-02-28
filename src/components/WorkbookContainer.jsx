@@ -55,11 +55,6 @@ export function WorkbookContainer(props) {
     const permissionValue   = resolveAttr(permissionType)?? "View";
 
     // ── Resolve access level ───────────────────────────────────────────────
-    // Step 1: isAdmin → full access immediately, no further checks
-    // Step 2: Verify the WorkBookAccess record belongs to the current user
-    //         (compare currentUserId with accessUserId from the record)
-    // Step 3: If match → apply PermissionType (Edit = cells, View = readonly)
-    // Step 4: No match / missing → read only (safe default)
     const isUserMatch  = currentUserValue
         && accessUserValue
         && currentUserValue.trim() === accessUserValue.trim();
@@ -69,19 +64,13 @@ export function WorkbookContainer(props) {
 
     // ── DEBUG (remove after testing) ──────────────────────────────────────
     console.info("[ExcelWidget] Access Debug:", {
-        currentUserValue,
-        accessUserValue,
-        permissionValue,
-        isAdminValue,
-        isUserMatch,
-        canEditCells,
-        canEditColumns,
+        currentUserValue, accessUserValue, permissionValue,
+        isAdminValue, isUserMatch, canEditCells, canEditColumns,
     });
 
     // ── Parse sheet data from JSON ─────────────────────────────────────────
-    // sheetJson contains cell data + column definitions for this sheet
     const [sheetData, setSheetData] = useState(() => parseSheetJson(sheetJsonValue, rowCount));
-    const [savingStatus, setSavingStatus] = useState("idle"); // "idle"|"saving"|"saved"
+    const [savingStatus, setSavingStatus] = useState("idle");
     const [showColumnPanel, setShowColumnPanel] = useState(false);
 
     const hotRef        = useRef(null);
@@ -89,12 +78,12 @@ export function WorkbookContainer(props) {
     const savedTimer    = useRef(null);
     const isFirstLoad   = useRef(true);
 
-    // ── Re-parse when Mendix sends new sheetJson (e.g. user clicks diff sheet)
+    // ── Re-parse when sheet ID changes (user clicked different tab) ────────
     useEffect(() => {
         const parsed = parseSheetJson(sheetJsonValue, rowCount);
         setSheetData(parsed);
-        isFirstLoad.current = true; // reset so tab switch doesn't trigger save
-    }, [sheetIdValue]); // re-parse when sheet ID changes (user clicked different tab)
+        isFirstLoad.current = true;
+    }, [sheetIdValue]);
 
     // ── Auto-save when sheetData changes ──────────────────────────────────
     useEffect(() => {
@@ -102,14 +91,9 @@ export function WorkbookContainer(props) {
             isFirstLoad.current = false;
             return;
         }
-
         setSavingStatus("saving");
         clearTimeout(debounceTimer.current);
-
-        debounceTimer.current = setTimeout(() => {
-            performSave();
-        }, AUTOSAVE_DEBOUNCE_MS);
-
+        debounceTimer.current = setTimeout(() => { performSave(); }, AUTOSAVE_DEBOUNCE_MS);
         return () => clearTimeout(debounceTimer.current);
     }, [sheetData]);
 
@@ -126,33 +110,25 @@ export function WorkbookContainer(props) {
         try {
             const newJson = serializeSheet(sheetData);
             const success = triggerSheetChange(sheetJson, newJson, onSheetChange);
-
-            if (!success) {
-                setSavingStatus("idle");
-                return;
-            }
-
+            if (!success) { setSavingStatus("idle"); return; }
             setSavingStatus("saved");
             clearTimeout(savedTimer.current);
             savedTimer.current = setTimeout(() => setSavingStatus("idle"), 2000);
-
         } catch (err) {
             console.error("[ExcelWidget] Auto-save failed:", err.message);
             setSavingStatus("idle");
         }
     }, [sheetData, sheetJson, onSheetChange]);
 
-    // ── Cell change handler ────────────────────────────────────────────────
+    // ── Cell / meta / dimension change handlers ────────────────────────────
     const handleCellChange = useCallback((newData) => {
         setSheetData(prev => ({ ...prev, data: newData }));
     }, []);
 
-    // ── Meta change handler (formatting) ──────────────────────────────────
     const handleMetaChange = useCallback((newMeta) => {
         setSheetData(prev => ({ ...prev, cellMeta: newMeta }));
     }, []);
 
-    // ── Dimension change handler ───────────────────────────────────────────
     const handleDimensionChange = useCallback((dimensions) => {
         setSheetData(prev => ({ ...prev, ...dimensions }));
     }, []);
@@ -160,17 +136,12 @@ export function WorkbookContainer(props) {
     // ── Column handlers (admin only) ───────────────────────────────────────
     const handleAddColumn = useCallback(() => {
         setSheetData(prev => {
-            const cols     = prev.columns || [];
-            const newCol   = {
-                key:      `col-${Date.now()}`,
-                header:   `Column ${cols.length + 1}`,
-                type:     "text",
-                width:    120,
-                source:   [],
-                format:   "",
-                readOnly: false,
+            const cols   = prev.columns || [];
+            const newCol = {
+                key: `col-${Date.now()}`, header: `Column ${cols.length + 1}`,
+                type: "text", width: 120, source: [], format: "", readOnly: false,
             };
-            const newData  = (prev.data || []).map(row => [...row, null]);
+            const newData = (prev.data || []).map(row => [...row, null]);
             return { ...prev, columns: [...cols, newCol], data: newData };
         });
     }, []);
@@ -178,22 +149,16 @@ export function WorkbookContainer(props) {
     const handleUpdateColumn = useCallback((colKey, changes) => {
         setSheetData(prev => ({
             ...prev,
-            columns: (prev.columns || []).map(c =>
-                c.key === colKey ? { ...c, ...changes } : c
-            ),
+            columns: (prev.columns || []).map(c => c.key === colKey ? { ...c, ...changes } : c),
         }));
     }, []);
 
     const handleDeleteColumn = useCallback((colKey) => {
         setSheetData(prev => {
-            const idx      = (prev.columns || []).findIndex(c => c.key === colKey);
+            const idx = (prev.columns || []).findIndex(c => c.key === colKey);
             if (idx === -1) return prev;
-            const newCols  = prev.columns.filter(c => c.key !== colKey);
-            const newData  = (prev.data || []).map(row => {
-                const r = [...row];
-                r.splice(idx, 1);
-                return r;
-            });
+            const newCols = prev.columns.filter(c => c.key !== colKey);
+            const newData = (prev.data || []).map(row => { const r = [...row]; r.splice(idx, 1); return r; });
             return { ...prev, columns: newCols, data: newData };
         });
     }, []);
@@ -226,19 +191,56 @@ export function WorkbookContainer(props) {
         mergedCells: sheetData.mergedCells || [],
     };
 
+    const hasCustomColumns = sheet.columns.length > 0;
+
     return (
         <div className={CSS.WORKBOOK_ROOT}>
 
             {/* ── Sheet name header ─────────────────────────────────── */}
             {showSheetName && (
                 <div className={CSS.HEADER}>
-                    <span className="eww-header__title">
-                        📄 {sheetNameValue}
-                    </span>
+
+                    {/* Left: sheet icon + name */}
+                    <div className="eww-header__left">
+                        <span className="eww-header__sheet-icon">📄</span>
+                        <span className="eww-header__title">{sheetNameValue}</span>
+
+                        {/* Admin: Column config button — lives right beside the sheet name */}
+                        {canEditColumns && (
+                            <button
+                                className={[
+                                    "eww-col-config-btn",
+                                    hasCustomColumns ? "eww-col-config-btn--active" : "",
+                                ].filter(Boolean).join(" ")}
+                                onClick={() => setShowColumnPanel(true)}
+                                title={
+                                    hasCustomColumns
+                                        ? `${sheet.columns.length} custom column${sheet.columns.length !== 1 ? "s" : ""} configured — click to edit`
+                                        : "Configure custom column headers (Admin)"
+                                }
+                            >
+                                <span className="eww-col-config-btn__icon">⚙</span>
+                                <span className="eww-col-config-btn__label">
+                                    {hasCustomColumns
+                                        ? `${sheet.columns.length} Column${sheet.columns.length !== 1 ? "s" : ""}`
+                                        : "Columns"
+                                    }
+                                </span>
+                                {hasCustomColumns && (
+                                    <span className="eww-col-config-btn__badge">
+                                        {sheet.columns.length}
+                                    </span>
+                                )}
+                            </button>
+                        )}
+                    </div>
+
+                    {/* Right: saving indicator + read-only badge */}
                     <div className="eww-header__meta">
                         <SavingIndicator status={savingStatus} />
                         {!canEditCells && <ReadOnlyBadge />}
                     </div>
+
                 </div>
             )}
 
@@ -249,8 +251,6 @@ export function WorkbookContainer(props) {
                     activeSheet={sheet}
                     onMetaChange={(_, newMeta) => handleMetaChange(newMeta)}
                     disabled={!canEditCells}
-                    isAdmin={canEditColumns}
-                    onOpenColumnSettings={() => setShowColumnPanel(true)}
                 />
             )}
 

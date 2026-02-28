@@ -114,6 +114,89 @@
     flex-shrink: 0;
 }
 
+/* ── ADD THESE CLASSES to ExcelWorkbookWidget.css ──────────────────────────
+   Paste inside the .eww-root scope, e.g. after the "3. Workbook Header" block
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* Header layout — left group holds icon + name + config button */
+.eww-header__left {
+    display:     flex;
+    align-items: center;
+    gap:         8px;
+    min-width:   0;         /* allows text-overflow to work inside */
+    flex:        1;
+}
+
+.eww-header__sheet-icon {
+    font-size:   15px;
+    flex-shrink: 0;
+}
+
+/* ── Column Config Button ────────────────────────────────────────────────── */
+
+.eww-col-config-btn {
+    display:       inline-flex;
+    align-items:   center;
+    gap:           5px;
+    padding:       3px 10px 3px 8px;
+    background:    var(--eww-color-surface);
+    border:        1px solid var(--eww-color-border);
+    border-radius: 6px;
+    cursor:        pointer;
+    font-family:   var(--eww-font-family);
+    font-size:     12px;
+    font-weight:   500;
+    color:         var(--eww-color-text-muted);
+    white-space:   nowrap;
+    flex-shrink:   0;
+    transition:    background 0.15s, border-color 0.15s, color 0.15s;
+    line-height:   1;
+}
+
+.eww-col-config-btn:hover {
+    background:   var(--eww-color-tab-hover);
+    border-color: var(--eww-color-border-dark);
+    color:        var(--eww-color-text);
+}
+
+/* Active state: custom columns ARE configured */
+.eww-col-config-btn--active {
+    background:   #e8f0fe;
+    border-color: #c5d8fb;
+    color:        var(--eww-color-primary);
+}
+
+.eww-col-config-btn--active:hover {
+    background:   #d2e3fc;
+    border-color: #adc6f5;
+}
+
+.eww-col-config-btn__icon {
+    font-size:   13px;
+    flex-shrink: 0;
+}
+
+.eww-col-config-btn__label {
+    font-size: 12px;
+}
+
+/* Small count badge — shown only when columns are configured */
+.eww-col-config-btn__badge {
+    display:         inline-flex;
+    align-items:     center;
+    justify-content: center;
+    min-width:       16px;
+    height:          16px;
+    padding:         0 4px;
+    background:      var(--eww-color-primary);
+    color:           #fff;
+    border-radius:   8px;
+    font-size:       10px;
+    font-weight:     600;
+    line-height:     1;
+    flex-shrink:     0;
+}
+
 /* ── 4. Toolbar ────────────────────────────────────────────────────────────── */
 
 .eww-toolbar {
