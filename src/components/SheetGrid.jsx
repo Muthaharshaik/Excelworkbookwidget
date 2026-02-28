@@ -1,6 +1,6 @@
 /**
- * SheetGrid.jsx - Step A
- * Typed columns + custom cell formatting. No HyperFormula. No CDN.
+ * SheetGrid.jsx
+ * Typed columns + custom cell formatting + custom row labels.
  */
 
 import { createElement, useRef, useCallback, memo, useMemo } from "react";
@@ -38,7 +38,7 @@ export const SheetGrid = memo(function SheetGrid({
     const cellMetaRef   = useRef(sheet.cellMeta);
     cellMetaRef.current = sheet.cellMeta;
 
-    // Register renderer synchronously before HotTable first paints
+    // Register custom cell renderer
     useMemo(() => {
         Handsontable.renderers.registerRenderer(
             rendererName,
@@ -56,9 +56,7 @@ export const SheetGrid = memo(function SheetGrid({
         );
     }, [rendererName]);
 
-    // Build typed columns from sheet.columns[]
-    // If columns[] is empty → use HotTable default A,B,C headers
-    // If columns[] is defined → custom header names + data types
+    // ── Build column definitions ───────────────────────────────────────────
     const { hotColumns, hotColHeaders } = useMemo(() => {
         const cols = sheet.columns || [];
         if (cols.length === 0) {
@@ -95,6 +93,31 @@ export const SheetGrid = memo(function SheetGrid({
 
         return { hotColumns: hotCols, hotColHeaders: headerLabels };
     }, [sheet.columns, isEditable, isAdmin, colHeaders, rendererName]);
+
+    // ── Slice data to match configured rows ───────────────────────────────
+    // This is the KEY behaviour that mirrors column config:
+    //   - No rowLabels configured → show all data rows (full grid)
+    //   - rowLabels configured    → show ONLY as many rows as labels defined
+    //     e.g. 3 labels → only 3 rows visible, rest are hidden
+    //   - Delete all labels       → full grid returns (same as columns)
+    const rowLabels    = sheet.rowLabels || [];
+    const hasRowLabels = rowLabels.length > 0;
+
+    const gridData = useMemo(() => {
+        const fullData = deepClone(sheet.data);
+        if (!hasRowLabels) return fullData;
+        // Slice to exactly rowLabels.length rows — same logic as columns
+        // limiting visible columns to sheet.columns.length
+        return fullData.slice(0, rowLabels.length);
+    }, [sheet.data, rowLabels.length, hasRowLabels]);
+
+    // ── Build row headers ──────────────────────────────────────────────────
+    // No labels → use rowHeaders boolean (default 1,2,3... or false)
+    // Labels configured → show each label as the row header
+    const hotRowHeaders = useMemo(() => {
+        if (!hasRowLabels) return rowHeaders;
+        return (rowIndex) => rowLabels[rowIndex] ?? "";
+    }, [rowLabels, hasRowLabels, rowHeaders]);
 
     const cells = useCallback(() => {
         if (sheet.columns?.length) return {};
@@ -140,11 +163,11 @@ export const SheetGrid = memo(function SheetGrid({
     return (
         <HotTable
             ref={gridRef}
-            data={deepClone(sheet.data)}
+            data={gridData}
             licenseKey={HOT_LICENSE_KEY}
             colHeaders={hotColHeaders}
             columns={hotColumns}
-            rowHeaders={rowHeaders}
+            rowHeaders={hotRowHeaders}
             width="100%"
             height={height}
             colWidths={colWidths}

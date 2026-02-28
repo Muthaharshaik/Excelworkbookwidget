@@ -197,6 +197,30 @@
     flex-shrink:     0;
 }
 
+/* ── Row Config Button — green accent to distinguish from column button ───── */
+
+.eww-header__config-group {
+    display:    flex;
+    align-items: center;
+    gap:        4px;
+    flex-shrink: 0;
+}
+
+.eww-row-config-btn--active {
+    background:   #e6f4ea !important;
+    border-color: #b7dfbe !important;
+    color:        #1e7e34 !important;
+}
+
+.eww-row-config-btn--active:hover {
+    background:   #ceead6 !important;
+    border-color: #93c49d !important;
+}
+
+.eww-row-config-btn__badge {
+    background: #1e7e34 !important;
+}
+
 /* ── 4. Toolbar ────────────────────────────────────────────────────────────── */
 
 .eww-toolbar {

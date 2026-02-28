@@ -1,19 +1,8 @@
 /**
  * WorkbookContainer.jsx
  *
- * NEW ARCHITECTURE (single sheet per widget instance):
- *   - Widget sits inside DataView of Spreadsheet entity
- *   - Reads ONE sheet's data from sheetJson attribute
- *   - Writes cell changes back to sheetJson via setValue()
- *   - Mendix ListView handles sheet tabs (Sheet1, Sheet2...)
- *   - No sheet add/delete/rename in widget — Mendix owns that
- *
- * DATA FLOW:
- *   Mendix DataView(Spreadsheet) → sheetJson prop
- *     → parseSheetJson() → grid data
- *       → user edits cell
- *         → serializeSheet() → setValue(newJson)
- *           → onSheetChange.execute() → Mendix commits
+ * Single sheet per widget instance.
+ * Column config + Row config buttons live beside the sheet name in the header.
  */
 
 import { createElement, useRef, useCallback, useState, useEffect } from "react";
@@ -21,6 +10,7 @@ import { createElement, useRef, useCallback, useState, useEffect } from "react";
 import { SheetGrid }           from "./SheetGrid";
 import { Toolbar }             from "./Toolbar";
 import { ColumnSettingsPanel } from "./ColumnSettingsPanel";
+import { RowSettingsPanel }    from "./RowSettingsPanel";
 import { ReadOnlyBadge }       from "./ReadOnlyBadge";
 
 import { parseSheetJson, serializeSheet } from "../services/dataService";
@@ -46,13 +36,13 @@ export function WorkbookContainer(props) {
     } = props;
 
     // ── Resolve Mendix attribute / expression values ───────────────────────
-    const sheetIdValue      = resolveAttr(sheetId)       ?? "";
-    const sheetNameValue    = resolveAttr(sheetName)     ?? "Sheet";
+    const sheetIdValue      = resolveAttr(sheetId)        ?? "";
+    const sheetNameValue    = resolveAttr(sheetName)      ?? "Sheet";
     const sheetJsonValue    = resolveAttr(sheetJson);
-    const isAdminValue      = resolveAttr(isAdmin)       ?? false;
-    const currentUserValue  = resolveAttr(currentUserId) ?? "";
-    const accessUserValue   = resolveAttr(accessUserId)  ?? "";
-    const permissionValue   = resolveAttr(permissionType)?? "View";
+    const isAdminValue      = resolveAttr(isAdmin)        ?? false;
+    const currentUserValue  = resolveAttr(currentUserId)  ?? "";
+    const accessUserValue   = resolveAttr(accessUserId)   ?? "";
+    const permissionValue   = resolveAttr(permissionType) ?? "View";
 
     // ── Resolve access level ───────────────────────────────────────────────
     const isUserMatch  = currentUserValue
@@ -62,23 +52,23 @@ export function WorkbookContainer(props) {
     const canEditCells   = isAdminValue || (isUserMatch && permissionValue === "Edit");
     const canEditColumns = isAdminValue;
 
-    // ── DEBUG (remove after testing) ──────────────────────────────────────
     console.info("[ExcelWidget] Access Debug:", {
         currentUserValue, accessUserValue, permissionValue,
         isAdminValue, isUserMatch, canEditCells, canEditColumns,
     });
 
-    // ── Parse sheet data from JSON ─────────────────────────────────────────
-    const [sheetData, setSheetData] = useState(() => parseSheetJson(sheetJsonValue, rowCount));
-    const [savingStatus, setSavingStatus] = useState("idle");
+    // ── Sheet data state ───────────────────────────────────────────────────
+    const [sheetData, setSheetData]             = useState(() => parseSheetJson(sheetJsonValue, rowCount));
+    const [savingStatus, setSavingStatus]       = useState("idle");
     const [showColumnPanel, setShowColumnPanel] = useState(false);
+    const [showRowPanel, setShowRowPanel]       = useState(false);
 
     const hotRef        = useRef(null);
     const debounceTimer = useRef(null);
     const savedTimer    = useRef(null);
     const isFirstLoad   = useRef(true);
 
-    // ── Re-parse when sheet ID changes (user clicked different tab) ────────
+    // ── Re-parse when sheet ID changes ────────────────────────────────────
     useEffect(() => {
         const parsed = parseSheetJson(sheetJsonValue, rowCount);
         setSheetData(parsed);
@@ -87,17 +77,14 @@ export function WorkbookContainer(props) {
 
     // ── Auto-save when sheetData changes ──────────────────────────────────
     useEffect(() => {
-        if (isFirstLoad.current) {
-            isFirstLoad.current = false;
-            return;
-        }
+        if (isFirstLoad.current) { isFirstLoad.current = false; return; }
         setSavingStatus("saving");
         clearTimeout(debounceTimer.current);
         debounceTimer.current = setTimeout(() => { performSave(); }, AUTOSAVE_DEBOUNCE_MS);
         return () => clearTimeout(debounceTimer.current);
     }, [sheetData]);
 
-    // ── Cleanup timers on unmount ──────────────────────────────────────────
+    // ── Cleanup on unmount ────────────────────────────────────────────────
     useEffect(() => {
         return () => {
             clearTimeout(debounceTimer.current);
@@ -120,7 +107,7 @@ export function WorkbookContainer(props) {
         }
     }, [sheetData, sheetJson, onSheetChange]);
 
-    // ── Cell / meta / dimension change handlers ────────────────────────────
+    // ── Cell / meta / dimension handlers ──────────────────────────────────
     const handleCellChange = useCallback((newData) => {
         setSheetData(prev => ({ ...prev, data: newData }));
     }, []);
@@ -158,7 +145,9 @@ export function WorkbookContainer(props) {
             const idx = (prev.columns || []).findIndex(c => c.key === colKey);
             if (idx === -1) return prev;
             const newCols = prev.columns.filter(c => c.key !== colKey);
-            const newData = (prev.data || []).map(row => { const r = [...row]; r.splice(idx, 1); return r; });
+            const newData = (prev.data || []).map(row => {
+                const r = [...row]; r.splice(idx, 1); return r;
+            });
             return { ...prev, columns: newCols, data: newData };
         });
     }, []);
@@ -178,6 +167,48 @@ export function WorkbookContainer(props) {
         });
     }, []);
 
+    // ── Row label handlers (admin only) ───────────────────────────────────
+    //
+    // KEY DESIGN: row labels are independent of data rows.
+    //   - handleAddRow    → only pushes a new "" entry into rowLabels[]
+    //                       does NOT add a data row (data grid size is separate)
+    //   - handleDeleteRow → only removes from rowLabels[]
+    //                       does NOT delete a data row
+    //   - When rowLabels[] is empty → SheetGrid falls back to default 1,2,3... numbers
+
+    const handleAddRow = useCallback(() => {
+        setSheetData(prev => ({
+            ...prev,
+            rowLabels: [...(prev.rowLabels || []), ""],
+        }));
+    }, []);
+
+    const handleUpdateRow = useCallback((rowIndex, newLabel) => {
+        setSheetData(prev => {
+            const labels = [...(prev.rowLabels || [])];
+            while (labels.length <= rowIndex) labels.push("");
+            labels[rowIndex] = newLabel;
+            return { ...prev, rowLabels: labels };
+        });
+    }, []);
+
+    // Removes the label entry at rowIndex only — data rows are untouched
+    const handleDeleteRow = useCallback((rowIndex) => {
+        setSheetData(prev => ({
+            ...prev,
+            rowLabels: (prev.rowLabels || []).filter((_, i) => i !== rowIndex),
+        }));
+    }, []);
+
+    const handleReorderRow = useCallback((fromIndex, toIndex) => {
+        setSheetData(prev => {
+            const labels = [...(prev.rowLabels || [])];
+            const [moved] = labels.splice(fromIndex, 1);
+            labels.splice(toIndex, 0, moved);
+            return { ...prev, rowLabels: labels };
+        });
+    }, []);
+
     // ── Build sheet object for SheetGrid ──────────────────────────────────
     const sheet = {
         sheetId:     sheetIdValue,
@@ -185,6 +216,7 @@ export function WorkbookContainer(props) {
         isEditable:  canEditCells,
         data:        sheetData.data        || [],
         columns:     sheetData.columns     || [],
+        rowLabels:   sheetData.rowLabels   || [],
         cellMeta:    sheetData.cellMeta    || {},
         colWidths:   sheetData.colWidths   || [],
         rowHeights:  sheetData.rowHeights  || [],
@@ -192,6 +224,7 @@ export function WorkbookContainer(props) {
     };
 
     const hasCustomColumns = sheet.columns.length > 0;
+    const hasCustomRows    = sheet.rowLabels.length > 0;
 
     return (
         <div className={CSS.WORKBOOK_ROOT}>
@@ -200,38 +233,66 @@ export function WorkbookContainer(props) {
             {showSheetName && (
                 <div className={CSS.HEADER}>
 
-                    {/* Left: sheet icon + name */}
+                    {/* Left: icon + name + config buttons */}
                     <div className="eww-header__left">
                         <span className="eww-header__sheet-icon">📄</span>
                         <span className="eww-header__title">{sheetNameValue}</span>
 
-                        {/* Admin: Column config button — lives right beside the sheet name */}
                         {canEditColumns && (
-                            <button
-                                className={[
-                                    "eww-col-config-btn",
-                                    hasCustomColumns ? "eww-col-config-btn--active" : "",
-                                ].filter(Boolean).join(" ")}
-                                onClick={() => setShowColumnPanel(true)}
-                                title={
-                                    hasCustomColumns
-                                        ? `${sheet.columns.length} custom column${sheet.columns.length !== 1 ? "s" : ""} configured — click to edit`
-                                        : "Configure custom column headers (Admin)"
-                                }
-                            >
-                                <span className="eww-col-config-btn__icon">⚙</span>
-                                <span className="eww-col-config-btn__label">
-                                    {hasCustomColumns
-                                        ? `${sheet.columns.length} Column${sheet.columns.length !== 1 ? "s" : ""}`
-                                        : "Columns"
+                            <div className="eww-header__config-group">
+
+                                {/* ── Column config button ──────────── */}
+                                <button
+                                    className={[
+                                        "eww-col-config-btn",
+                                        hasCustomColumns ? "eww-col-config-btn--active" : "",
+                                    ].filter(Boolean).join(" ")}
+                                    onClick={() => setShowColumnPanel(true)}
+                                    title={
+                                        hasCustomColumns
+                                            ? `${sheet.columns.length} custom column${sheet.columns.length !== 1 ? "s" : ""} configured — click to edit`
+                                            : "Configure custom column headers (Admin)"
                                     }
-                                </span>
-                                {hasCustomColumns && (
-                                    <span className="eww-col-config-btn__badge">
-                                        {sheet.columns.length}
+                                >
+                                    <span className="eww-col-config-btn__icon">⊞</span>
+                                    <span className="eww-col-config-btn__label">
+                                        {hasCustomColumns
+                                            ? `${sheet.columns.length} Column${sheet.columns.length !== 1 ? "s" : ""}`
+                                            : "Columns"}
                                     </span>
-                                )}
-                            </button>
+                                    {hasCustomColumns && (
+                                        <span className="eww-col-config-btn__badge">{sheet.columns.length}</span>
+                                    )}
+                                </button>
+
+                                {/* ── Row config button ─────────────── */}
+                                <button
+                                    className={[
+                                        "eww-col-config-btn",
+                                        "eww-row-config-btn",
+                                        hasCustomRows ? "eww-col-config-btn--active eww-row-config-btn--active" : "",
+                                    ].filter(Boolean).join(" ")}
+                                    onClick={() => setShowRowPanel(true)}
+                                    title={
+                                        hasCustomRows
+                                            ? `${sheet.rowLabels.length} row label${sheet.rowLabels.length !== 1 ? "s" : ""} configured — click to edit`
+                                            : "Configure custom row labels (Admin)"
+                                    }
+                                >
+                                    <span className="eww-col-config-btn__icon">☰</span>
+                                    <span className="eww-col-config-btn__label">
+                                        {hasCustomRows
+                                            ? `${sheet.rowLabels.length} Row${sheet.rowLabels.length !== 1 ? "s" : ""}`
+                                            : "Rows"}
+                                    </span>
+                                    {hasCustomRows && (
+                                        <span className="eww-col-config-btn__badge eww-row-config-btn__badge">
+                                            {sheet.rowLabels.length}
+                                        </span>
+                                    )}
+                                </button>
+
+                            </div>
                         )}
                     </div>
 
@@ -271,7 +332,7 @@ export function WorkbookContainer(props) {
                 />
             </div>
 
-            {/* ── Column settings panel (admin only) ────────────────── */}
+            {/* ── Column settings panel ─────────────────────────────── */}
             {showColumnPanel && canEditColumns && (
                 <ColumnSettingsPanel
                     sheet={sheet}
@@ -284,6 +345,19 @@ export function WorkbookContainer(props) {
                 />
             )}
 
+            {/* ── Row settings panel ────────────────────────────────── */}
+            {showRowPanel && canEditColumns && (
+                <RowSettingsPanel
+                    sheet={sheet}
+                    isAdmin={canEditColumns}
+                    onAddRow={handleAddRow}
+                    onUpdateRow={handleUpdateRow}
+                    onDeleteRow={handleDeleteRow}
+                    onReorderRow={handleReorderRow}
+                    onClose={() => setShowRowPanel(false)}
+                />
+            )}
+
         </div>
     );
 }
@@ -292,7 +366,7 @@ export function WorkbookContainer(props) {
 
 function SavingIndicator({ status }) {
     if (status === "idle") return null;
-    const isSaving  = status === "saving";
+    const isSaving = status === "saving";
     const className = [
         CSS.SAVING_INDICATOR,
         isSaving ? "eww-saving-indicator--saving" : "eww-saving-indicator--saved",

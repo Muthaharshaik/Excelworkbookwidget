@@ -8,11 +8,18 @@
  * {
  *   "data":        [[row data]],
  *   "columns":     [{ key, header, type, width, source, format, readOnly }],
+ *   "rowLabels":   ["Q1", "Q2", "", "Revenue", ...],   ← custom row header strings
  *   "cellMeta":    { "r0_c0": { bold, italic, fontColor, bgColor, align } },
  *   "colWidths":   [120, 80, 150],
  *   "rowHeights":  [23, 23, ...],
  *   "mergedCells": [{ row, col, rowspan, colspan }]
  * }
+ *
+ * rowLabels rules:
+ *   - Array of strings, one per data row
+ *   - Empty string ""  → show default row number in grid
+ *   - Array can be shorter than data rows — missing entries treated as ""
+ *   - Array can be longer  than data rows — extra entries are ignored
  */
 
 import { MIN_COLS } from "../utils/constants";
@@ -27,7 +34,7 @@ import { MIN_COLS } from "../utils/constants";
  *
  * @param {string} jsonString   - value of Spreadsheet.sheetJson attribute
  * @param {number} rowCount     - configured row count (from widget prop)
- * @returns {object}            - { data, columns, cellMeta, colWidths, rowHeights, mergedCells }
+ * @returns {object}            - { data, columns, rowLabels, cellMeta, colWidths, rowHeights, mergedCells }
  */
 export function parseSheetJson(jsonString, rowCount = 50) {
     const empty = buildEmptySheetData(rowCount);
@@ -51,11 +58,12 @@ export function parseSheetJson(jsonString, rowCount = 50) {
 
     return {
         data:        normaliseData(raw.data, rowCount),
-        columns:     Array.isArray(raw.columns)     ? raw.columns     : [],
-        cellMeta:    (raw.cellMeta && typeof raw.cellMeta === "object") ? raw.cellMeta : {},
-        colWidths:   Array.isArray(raw.colWidths)   ? raw.colWidths   : [],
-        rowHeights:  Array.isArray(raw.rowHeights)  ? raw.rowHeights  : [],
-        mergedCells: Array.isArray(raw.mergedCells) ? raw.mergedCells : [],
+        columns:     Array.isArray(raw.columns)     ? raw.columns                          : [],
+        rowLabels:   Array.isArray(raw.rowLabels)   ? raw.rowLabels.map(l => String(l ?? "")) : [],
+        cellMeta:    (raw.cellMeta && typeof raw.cellMeta === "object") ? raw.cellMeta     : {},
+        colWidths:   Array.isArray(raw.colWidths)   ? raw.colWidths                        : [],
+        rowHeights:  Array.isArray(raw.rowHeights)  ? raw.rowHeights                       : [],
+        mergedCells: Array.isArray(raw.mergedCells) ? raw.mergedCells                      : [],
     };
 }
 
@@ -68,7 +76,7 @@ export function parseSheetJson(jsonString, rowCount = 50) {
  * Converts widget state back to JSON string for Spreadsheet.sheetJson.
  * Trims empty trailing rows/cols to keep JSON small.
  *
- * @param {object} sheetData  - { data, columns, cellMeta, colWidths, rowHeights, mergedCells }
+ * @param {object} sheetData  - { data, columns, rowLabels, cellMeta, colWidths, rowHeights, mergedCells }
  * @returns {string}
  */
 export function serializeSheet(sheetData) {
@@ -76,6 +84,7 @@ export function serializeSheet(sheetData) {
         return JSON.stringify({
             data:        trimData(sheetData.data || []),
             columns:     sheetData.columns     || [],
+            rowLabels:   trimRowLabels(sheetData.rowLabels || []),
             cellMeta:    sheetData.cellMeta    || {},
             colWidths:   sheetData.colWidths   || [],
             rowHeights:  sheetData.rowHeights  || [],
@@ -95,6 +104,7 @@ function buildEmptySheetData(rowCount) {
     return {
         data:        Array.from({ length: rowCount }, () => Array(MIN_COLS).fill(null)),
         columns:     [],
+        rowLabels:   [],
         cellMeta:    {},
         colWidths:   [],
         rowHeights:  [],
@@ -115,7 +125,6 @@ function normaliseData(raw, rowCount) {
         return [...row, ...Array(maxCols - row.length).fill(null)];
     });
 
-    // Pad to rowCount if needed
     while (paddedRows.length < rowCount) {
         paddedRows.push(Array(maxCols).fill(null));
     }
@@ -145,6 +154,20 @@ function trimData(data) {
     });
 
     return rows.map(row => row.slice(0, maxUsedCol + 1));
+}
+
+/**
+ * trimRowLabels
+ * Strips trailing empty strings so we don't bloat the JSON
+ * when most rows have no custom label.
+ */
+function trimRowLabels(labels) {
+    if (!Array.isArray(labels) || labels.length === 0) return [];
+    const arr = [...labels];
+    while (arr.length > 0 && arr[arr.length - 1] === "") {
+        arr.pop();
+    }
+    return arr;
 }
 
 function isEmpty(v) {
