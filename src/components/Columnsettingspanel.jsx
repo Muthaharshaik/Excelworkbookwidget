@@ -1,18 +1,33 @@
 /**
- * ColumnSettingsPanel.jsx — Redesigned UI
- * No JSX fragments — Mendix compatibility.
+ * ColumnSettingsPanel.jsx
+ * - Lock column removed
+ * - Time type removed
+ * - No icons/emojis
+ * - No JSX fragments
+ *
+ * KEY FIX: All text inputs (header name, format, dropdown source textarea)
+ * use LOCAL state and only call onUpdate on onBlur.
+ * Previously every keystroke called onUpdate → setSheetData → full re-render
+ * → textarea/input lost focus after every character typed.
  */
 
-import { createElement, useState, useCallback } from "react";
+import { createElement, useState, useCallback, useEffect } from "react";
 import { COLUMN_TYPE_META } from "../utils/constants";
 
 const TYPE_COLORS = {
     text:     { bg: "#eff6ff", color: "#2563eb", border: "#bfdbfe" },
     numeric:  { bg: "#f0fdf4", color: "#16a34a", border: "#bbf7d0" },
     date:     { bg: "#fff7ed", color: "#ea580c", border: "#fed7aa" },
-    time:     { bg: "#fdf4ff", color: "#9333ea", border: "#e9d5ff" },
     checkbox: { bg: "#f0fdfa", color: "#0d9488", border: "#99f6e4" },
     dropdown: { bg: "#fefce8", color: "#ca8a04", border: "#fde68a" },
+};
+
+const TYPE_SHORT = {
+    text:     "Txt",
+    numeric:  "Num",
+    date:     "Dte",
+    checkbox: "Chk",
+    dropdown: "Drp",
 };
 
 export function ColumnSettingsPanel({
@@ -28,14 +43,11 @@ export function ColumnSettingsPanel({
         setExpandedKey(prev => prev === key ? null : key);
     }, []);
 
-    // Wrapper div has no visual effect — both children are position:fixed
     return (
         <div style={{ display: "contents" }}>
 
-            {/* Backdrop */}
             <div style={S.backdrop} onClick={onClose} />
 
-            {/* Panel */}
             <div style={S.panel}>
 
                 {/* Header */}
@@ -77,7 +89,10 @@ export function ColumnSettingsPanel({
                         <div style={S.empty}>
                             <div style={S.emptyIcon}>⊞</div>
                             <div style={S.emptyTitle}>No columns configured</div>
-                            <div style={S.emptyDesc}>Add columns to replace the default A, B, C headers with custom names and types.</div>
+                            <div style={S.emptyDesc}>
+                                Add columns to replace the default A, B, C headers
+                                with custom names and data types.
+                            </div>
                         </div>
                     )}
                     {columns.map((col, index) => (
@@ -111,32 +126,59 @@ export function ColumnSettingsPanel({
     );
 }
 
+// ─── ColumnRow ────────────────────────────────────────────────────────────────
+// All text inputs use LOCAL state.
+// onChange  → updates local state only (no parent re-render → no focus loss)
+// onBlur    → commits to parent via onUpdate (triggers save)
+// type select is the only field that still calls onUpdate immediately
+// because changing type resets source/format anyway.
+
 function ColumnRow({ col, index, total, isExpanded, onToggleExpand, onUpdate, onDelete, onMoveUp, onMoveDown }) {
     const typeMeta   = COLUMN_TYPE_META.find(t => t.value === col.type) || COLUMN_TYPE_META[0];
     const typeColors = TYPE_COLORS[col.type] || TYPE_COLORS.text;
+    const typeShort  = TYPE_SHORT[col.type]  || "Txt";
+
+    // Local state for every text-based input
+    const [localHeader, setLocalHeader] = useState(col.header);
+    const [localFormat, setLocalFormat] = useState(col.format || "");
+    const [localSource, setLocalSource] = useState(
+        Array.isArray(col.source) ? col.source.join("\n") : ""
+    );
+
+    // Sync local state if the col prop changes from outside
+    // (e.g. type change resets format/source)
+    useEffect(() => { setLocalHeader(col.header); },                         [col.header]);
+    useEffect(() => { setLocalFormat(col.format || ""); },                   [col.format]);
+    useEffect(() => { setLocalSource(Array.isArray(col.source) ? col.source.join("\n") : ""); }, [col.source]);
 
     return (
         <div style={R.wrapper}>
             <div style={R.row}>
 
+                {/* Order */}
                 <div style={R.orderCol}>
                     <button onClick={onMoveUp}   disabled={index === 0}         style={R.arrow} title="Move up">▲</button>
                     <span style={R.indexNum}>{index + 1}</span>
                     <button onClick={onMoveDown} disabled={index === total - 1} style={R.arrow} title="Move down">▼</button>
                 </div>
 
-                <div style={{ ...R.typeBadge, background: typeColors.bg, color: typeColors.color, border: `1px solid ${typeColors.border}` }}>
-                    {typeMeta.icon}
+                {/* Type badge */}
+                <div style={{ ...R.typeBadge, background: typeColors.bg, color: typeColors.color, border: `1px solid ${typeColors.border}` }}
+                    title={typeMeta.label}>
+                    {typeShort}
                 </div>
 
+                {/* Header name — local state, commit on blur */}
                 <input
-                    value={col.header}
-                    onChange={e => onUpdate({ header: e.target.value })}
+                    value={localHeader}
+                    onChange={e => setLocalHeader(e.target.value)}
+                    onBlur={() => onUpdate({ header: localHeader })}
                     style={R.headerInput}
                     placeholder="Column name"
                     maxLength={60}
                 />
 
+                {/* Type selector — immediate update (resets source/format) */}
                 <select
                     value={col.type}
                     onChange={e => onUpdate({ type: e.target.value, source: [], format: "" })}
@@ -147,6 +189,7 @@ function ColumnRow({ col, index, total, isExpanded, onToggleExpand, onUpdate, on
                     ))}
                 </select>
 
+                {/* Expand toggle */}
                 {(typeMeta.hasSource || typeMeta.hasFormat) && (
                     <button onClick={onToggleExpand} style={R.expandBtn} title="More settings">
                         <svg width="10" height="10" viewBox="0 0 10 10" fill="none"
@@ -156,6 +199,7 @@ function ColumnRow({ col, index, total, isExpanded, onToggleExpand, onUpdate, on
                     </button>
                 )}
 
+                {/* Delete */}
                 <button onClick={onDelete} style={R.deleteBtn} title={`Delete "${col.header}"`}>
                     <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                         <path d="M1 1l10 10M11 1L1 11" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/>
@@ -163,43 +207,55 @@ function ColumnRow({ col, index, total, isExpanded, onToggleExpand, onUpdate, on
                 </button>
             </div>
 
+            {/* Expanded settings */}
             {isExpanded && (
                 <div style={R.expanded}>
+
+                    {/* Dropdown source — local state, commit on blur */}
                     {typeMeta.hasSource && (
                         <div style={R.field}>
-                            <label style={R.label}>Options <span style={R.labelHint}>(one per line)</span></label>
+                            <label style={R.label}>
+                                Dropdown options
+                                <span style={R.labelHint}> (one per line)</span>
+                            </label>
                             <textarea
-                                value={(col.source || []).join("\n")}
-                                onChange={e => onUpdate({ source: e.target.value.split("\n").map(s => s.trim()).filter(Boolean) })}
+                                value={localSource}
+                                onChange={e => setLocalSource(e.target.value)}
+                                onBlur={() => onUpdate({
+                                    source: localSource
+                                        .split("\n")
+                                        .map(s => s.trim())
+                                        .filter(Boolean)
+                                })}
                                 style={R.textarea}
                                 placeholder={"Option A\nOption B\nOption C"}
                                 rows={4}
                             />
+                            <div style={R.fieldHint}>
+                                Users can only select values from this list.
+                            </div>
                         </div>
                     )}
+
+                    {/* Format string — local state, commit on blur */}
                     {typeMeta.hasFormat && (
                         <div style={R.field}>
                             <label style={R.label}>
                                 {col.type === "date" ? "Date format" : "Number format"}
-                                <span style={R.labelHint}> e.g. {col.type === "date" ? "DD/MM/YYYY" : "0,0.00"}</span>
+                                <span style={R.labelHint}>
+                                    {col.type === "date" ? " e.g. DD/MM/YYYY" : " e.g. 0,0.00"}
+                                </span>
                             </label>
                             <input
-                                value={col.format || ""}
-                                onChange={e => onUpdate({ format: e.target.value })}
+                                value={localFormat}
+                                onChange={e => setLocalFormat(e.target.value)}
+                                onBlur={() => onUpdate({ format: localFormat })}
                                 style={R.formatInput}
                                 placeholder={col.type === "date" ? "DD/MM/YYYY" : "0,0.00"}
                             />
                         </div>
                     )}
-                    <label style={{ ...R.label, display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginTop: 6 }}>
-                        <input
-                            type="checkbox"
-                            checked={col.readOnly || false}
-                            onChange={e => onUpdate({ readOnly: e.target.checked })}
-                            style={{ width: 14, height: 14, accentColor: "#2563eb" }}
-                        />
-                        Lock this column (read-only for users)
-                    </label>
+
                 </div>
             )}
         </div>
@@ -216,23 +272,18 @@ const S = {
         zIndex: 9998,
     },
     panel: {
-        position: "fixed",
-        top: 56, right: 16,
-        width: 440,
-        maxHeight: "calc(100vh - 80px)",
-        background: "#ffffff",
-        borderRadius: 12,
+        position: "fixed", top: 56, right: 16,
+        width: 440, maxHeight: "calc(100vh - 80px)",
+        background: "#ffffff", borderRadius: 12,
         boxShadow: "0 20px 60px rgba(15,23,42,0.18), 0 4px 16px rgba(15,23,42,0.08)",
         border: "1px solid rgba(226,232,240,0.8)",
         display: "flex", flexDirection: "column",
-        overflow: "hidden",
-        zIndex: 9999,
+        overflow: "hidden", zIndex: 9999,
         animation: "eww-slideIn 0.2s cubic-bezier(0.16,1,0.3,1)",
     },
     header: {
         display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "16px 18px",
-        borderBottom: "1px solid #f1f5f9",
+        padding: "16px 18px", borderBottom: "1px solid #f1f5f9",
         background: "linear-gradient(135deg, #f8faff 0%, #f0f4ff 100%)",
         flexShrink: 0,
     },
@@ -292,9 +343,9 @@ const R = {
     arrow:    { background: "none", border: "none", cursor: "pointer", fontSize: 7, padding: "2px 3px", color: "#cbd5e1", lineHeight: 1 },
     indexNum: { fontSize: 9, fontWeight: 700, color: "#cbd5e1", lineHeight: 1 },
     typeBadge: {
-        width: 28, height: 28, flexShrink: 0, borderRadius: 6,
+        width: 32, height: 24, flexShrink: 0, borderRadius: 5,
         display: "flex", alignItems: "center", justifyContent: "center",
-        fontSize: 12, fontWeight: 700,
+        fontSize: 10, fontWeight: 700, letterSpacing: "0.02em",
     },
     headerInput: {
         flex: 1, border: "1px solid #e2e8f0", borderRadius: 6,
@@ -319,12 +370,13 @@ const R = {
         display: "flex", alignItems: "center", justifyContent: "center", color: "#ef4444",
     },
     expanded: {
-        padding: "12px 14px 14px 50px",
+        padding: "12px 14px 14px 54px",
         background: "#f8fafc", borderTop: "1px solid #f1f5f9",
     },
     field:     { marginBottom: 10 },
     label:     { display: "block", fontSize: 11, fontWeight: 600, color: "#475569", marginBottom: 5 },
     labelHint: { fontWeight: 400, color: "#94a3b8" },
+    fieldHint: { fontSize: 11, color: "#94a3b8", marginTop: 4 },
     textarea: {
         width: "100%", border: "1px solid #e2e8f0", borderRadius: 6,
         padding: "7px 10px", fontSize: 12, fontFamily: "inherit",

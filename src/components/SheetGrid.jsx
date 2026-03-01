@@ -1,6 +1,10 @@
 /**
  * SheetGrid.jsx
  * Typed columns + custom cell formatting + custom row labels.
+ *
+ * KEY FIX: Custom renderer is only applied to text/numeric/date columns.
+ * Checkbox and dropdown use HotTable's native renderers — applying our
+ * custom text renderer on top of them was overriding their UI entirely.
  */
 
 import { createElement, useRef, useCallback, memo, useMemo } from "react";
@@ -38,7 +42,10 @@ export const SheetGrid = memo(function SheetGrid({
     const cellMetaRef   = useRef(sheet.cellMeta);
     cellMetaRef.current = sheet.cellMeta;
 
-    // Register custom cell renderer
+    // ── Register custom renderer ───────────────────────────────────────────
+    // Only used for text / numeric / date columns.
+    // Checkbox and dropdown columns must NOT use this — they need
+    // HotTable's native renderers to display correctly.
     useMemo(() => {
         Handsontable.renderers.registerRenderer(
             rendererName,
@@ -63,62 +70,97 @@ export const SheetGrid = memo(function SheetGrid({
             return { hotColumns: undefined, hotColHeaders: colHeaders };
         }
 
-        const typeIcons = { text: "T", numeric: "#", date: "📅", time: "⏰", checkbox: "☑", dropdown: "▾" };
-
         const hotCols = cols.map(col => {
-            const base = {
-                renderer: rendererName,
-                width:    col.width || DEFAULT_COL_WIDTH,
-                readOnly: col.readOnly || !isEditable,
-            };
+            const baseReadOnly = col.readOnly || !isEditable;
+
             switch (col.type) {
-                case "numeric":  return { ...base, type: "numeric",  numericFormat: { pattern: col.format || DEFAULT_NUMERIC_FORMAT } };
-                case "date":     return { ...base, type: "date",     dateFormat: col.format || DEFAULT_DATE_FORMAT, correctFormat: true };
-                case "checkbox": return { ...base, type: "checkbox" };
-                case "dropdown": return { ...base, type: "dropdown", source: col.source || [] };
-                case "time":     return { ...base, type: "time",     timeFormat: col.format || "hh:mm:ss", correctFormat: true };
-                default:         return { ...base, type: "text" };
+
+                case "numeric":
+                    // Apply custom renderer so formatting still works.
+                    // allowInvalid: false — rejects alphabets/non-numeric input.
+                    return {
+                        type:         "numeric",
+                        renderer:     rendererName,
+                        width:        col.width || DEFAULT_COL_WIDTH,
+                        readOnly:     baseReadOnly,
+                        numericFormat: { pattern: col.format || DEFAULT_NUMERIC_FORMAT },
+                        allowInvalid: false,
+                    };
+
+                case "date":
+                    // Apply custom renderer — date cells are still text-based visually.
+                    return {
+                        type:          "date",
+                        renderer:      rendererName,
+                        width:         col.width || DEFAULT_COL_WIDTH,
+                        readOnly:      baseReadOnly,
+                        dateFormat:    col.format || DEFAULT_DATE_FORMAT,
+                        correctFormat: true,
+                        allowInvalid:  false,
+                    };
+
+                case "checkbox":
+                    // DO NOT apply custom renderer — HotTable needs its own
+                    // checkbox renderer to draw the actual checkbox input.
+                    return {
+                        type:     "checkbox",
+                        width:    col.width || DEFAULT_COL_WIDTH,
+                        readOnly: baseReadOnly,
+                    };
+
+                case "dropdown":
+                    // DO NOT apply custom renderer — HotTable needs its own
+                    // autocomplete/dropdown renderer for the select UI.
+                    return {
+                        type:     "dropdown",
+                        width:    col.width || DEFAULT_COL_WIDTH,
+                        readOnly: baseReadOnly,
+                        source:   Array.isArray(col.source) && col.source.length > 0
+                                    ? col.source
+                                    : ["Option 1", "Option 2", "Option 3"],
+                        strict:       true,   // only allow values from source list
+                        allowInvalid: false,
+                    };
+
+                default: // text
+                    return {
+                        type:     "text",
+                        renderer: rendererName,
+                        width:    col.width || DEFAULT_COL_WIDTH,
+                        readOnly: baseReadOnly,
+                    };
             }
         });
 
+        // Header labels — plain text only, no icons or emojis
         const headerLabels = cols.map(col => {
-            const icon = typeIcons[col.type] || "T";
-            const safe = String(col.header || "")
-                .replace(/&/g, "&amp;").replace(/</g, "&lt;")
-                .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-            return isAdmin
-                ? `<span title="Type: ${col.type}">${icon} ${safe}</span>`
-                : safe;
+            return String(col.header || "")
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;");
         });
 
         return { hotColumns: hotCols, hotColHeaders: headerLabels };
-    }, [sheet.columns, isEditable, isAdmin, colHeaders, rendererName]);
+    }, [sheet.columns, isEditable, colHeaders, rendererName]);
 
-    // ── Slice data to match configured rows ───────────────────────────────
-    // This is the KEY behaviour that mirrors column config:
-    //   - No rowLabels configured → show all data rows (full grid)
-    //   - rowLabels configured    → show ONLY as many rows as labels defined
-    //     e.g. 3 labels → only 3 rows visible, rest are hidden
-    //   - Delete all labels       → full grid returns (same as columns)
+    // ── Build row headers ──────────────────────────────────────────────────
     const rowLabels    = sheet.rowLabels || [];
     const hasRowLabels = rowLabels.length > 0;
 
     const gridData = useMemo(() => {
         const fullData = deepClone(sheet.data);
         if (!hasRowLabels) return fullData;
-        // Slice to exactly rowLabels.length rows — same logic as columns
-        // limiting visible columns to sheet.columns.length
         return fullData.slice(0, rowLabels.length);
     }, [sheet.data, rowLabels.length, hasRowLabels]);
 
-    // ── Build row headers ──────────────────────────────────────────────────
-    // No labels → use rowHeaders boolean (default 1,2,3... or false)
-    // Labels configured → show each label as the row header
     const hotRowHeaders = useMemo(() => {
         if (!hasRowLabels) return rowHeaders;
         return (rowIndex) => rowLabels[rowIndex] ?? "";
     }, [rowLabels, hasRowLabels, rowHeaders]);
 
+    // ── cells callback — only when no custom columns defined ──────────────
+    // Applies our custom renderer to all cells in the default A-Z mode.
     const cells = useCallback(() => {
         if (sheet.columns?.length) return {};
         return { renderer: rendererName };
