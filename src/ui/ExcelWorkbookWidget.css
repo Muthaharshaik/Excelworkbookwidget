@@ -114,10 +114,6 @@
     flex-shrink: 0;
 }
 
-/* ── ADD THESE TO ExcelWorkbookWidget.css ───────────────────────────────────
-   Paste after the existing "3. Workbook Header" block inside .eww-root scope
-   ─────────────────────────────────────────────────────────────────────────── */
-
 /* ── Panel slide-in animation ───────────────────────────────────────────── */
 
 @keyframes eww-slideIn {
@@ -544,41 +540,44 @@
 
 /* ── 9. Handsontable Overrides ─────────────────────────────────────────────── */
 
-/* Make Handsontable fill its container */
+/*
+ * !! CRITICAL — READ BEFORE ADDING ANYTHING HERE !!
+ *
+ * HotTable renders two synchronised DOM panes side-by-side:
+ *   ht_clone_inline_start  — frozen left pane (row headers)
+ *   ht_master              — scrollable right pane (data cells)
+ *
+ * Row heights are calculated once in JavaScript and applied as explicit
+ * pixel values to both panes so their borders stay perfectly aligned.
+ *
+ * If you add CSS padding, min-height, line-height, or background to
+ * .htCore td or .htCore th AFTER that calculation runs, the visual
+ * cell height changes but the JS-calculated sync value does not update.
+ * Even 1px of extra padding causes the two panes to drift apart,
+ * producing the "misaligned borders" bug.
+ *
+ * RULE: Never add padding / height / background / border overrides
+ * to .htCore td, .htCore th, or .ht_master thead th here.
+ * Let HotTable control all cell dimensions.
+ */
+
+/* Font family only — does not affect cell height */
 .eww-grid-wrapper .handsontable {
     font-family: var(--eww-font-family);
     font-size:   var(--eww-font-size);
 }
 
-/* Tighten up the default HT cell padding slightly */
-.eww-grid-wrapper .htCore td,
-.eww-grid-wrapper .htCore th {
-    padding: 2px 5px;
+/* Z-index stacking for cloned panes — must not be removed */
+.ht_clone_top.handsontable {
+    z-index: 20 !important;
 }
 
-/* Style the column header to match our theme */
-.eww-grid-wrapper .ht_master thead th {
-    background: var(--eww-color-surface);
-    color:      var(--eww-color-text-muted);
-    font-weight: 500;
-    border-color: var(--eww-color-border);
+.ht_clone_inline_start.ht_clone_left.handsontable {
+    z-index: 18 !important;
 }
 
-/* Make sure read-only cells are visually distinct */
-.eww-grid-wrapper .htCore td.htDimmed {
-    color:      var(--eww-color-text-muted);
-    background: var(--eww-color-surface);
-}
-
-/* Current cell border */
-.eww-grid-wrapper .htCore td.current {
-    outline: 2px solid var(--eww-color-primary);
-    outline-offset: -2px;
-}
-
-/* Selection fill color */
-.eww-grid-wrapper .htCore td.area {
-    background: rgba(26, 115, 232, 0.08);
+.ht_clone_top_inline_start_corner.ht_clone_top_left_corner.handsontable {
+    z-index: 22 !important;
 }
 
 /* ── 10. Utility Classes ───────────────────────────────────────────────────── */
@@ -592,17 +591,4 @@
     overflow: hidden;
     clip:     rect(0, 0, 0, 0);
     border:   0;
-}
-
-
-.ht_clone_top.handsontable {
-    z-index: 20 !important;
-}
-
-.ht_clone_inline_start.ht_clone_left.handsontable {
-    z-index: 18 !important;
-}
-
-.ht_clone_top_inline_start_corner.ht_clone_top_left_corner.handsontable {
-    z-index: 22 !important;
 }

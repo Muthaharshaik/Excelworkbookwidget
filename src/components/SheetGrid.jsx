@@ -5,6 +5,12 @@
  * KEY FIX: Custom renderer is only applied to text/numeric/date columns.
  * Checkbox and dropdown use HotTable's native renderers — applying our
  * custom text renderer on top of them was overriding their UI entirely.
+ *
+ * ROW HEADER WIDTH FIX:
+ * When custom row labels are set, we measure the longest label with a
+ * canvas and pass rowHeaderWidth to HotTable so the frozen row-header
+ * pane is exactly wide enough. Without this HotTable defaults to ~50px,
+ * labels get cropped and the row/column borders misalign.
  */
 
 import { createElement, useRef, useCallback, memo, useMemo } from "react";
@@ -21,6 +27,48 @@ import {
     DEFAULT_NUMERIC_FORMAT,
 } from "../utils/constants";
 import { cellKey, deepClone } from "../utils/helpers";
+
+// ── Row header width helper ────────────────────────────────────────────────────
+// Uses an offscreen canvas to measure text accurately.
+// Falls back to a character-width estimate if canvas is unavailable.
+
+let _measureCanvas = null;
+
+function measureTextPx(text, font) {
+    try {
+        if (!_measureCanvas) _measureCanvas = document.createElement("canvas");
+        const ctx = _measureCanvas.getContext("2d");
+        ctx.font  = font;
+        return ctx.measureText(String(text)).width;
+    } catch {
+        return String(text).length * 7.5; // ~7.5px per char at 13px
+    }
+}
+
+/**
+ * Calculates the pixel width the row header column needs so all labels fit.
+ *
+ *  - When using default numeric row numbers → returns 50 (HotTable default)
+ *  - When using custom string labels → measures the longest label and adds
+ *    horizontal padding so text is never clipped
+ */
+function calcRowHeaderWidth(labels, hasCustomLabels) {
+    if (!hasCustomLabels || labels.length === 0) return 50;
+
+    const FONT      = "500 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+    const PAD       = 20; // 10px left + 10px right
+    const MIN       = 60;
+    const MAX       = 240;
+
+    const maxTextPx = labels.reduce((best, label) => {
+        const w = measureTextPx(label ?? "", FONT);
+        return w > best ? w : best;
+    }, 0);
+
+    return Math.min(MAX, Math.max(MIN, Math.ceil(maxTextPx) + PAD));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export const SheetGrid = memo(function SheetGrid({
     sheet,
@@ -76,8 +124,6 @@ export const SheetGrid = memo(function SheetGrid({
             switch (col.type) {
 
                 case "numeric":
-                    // Apply custom renderer so formatting still works.
-                    // allowInvalid: false — rejects alphabets/non-numeric input.
                     return {
                         type:         "numeric",
                         renderer:     rendererName,
@@ -88,7 +134,6 @@ export const SheetGrid = memo(function SheetGrid({
                     };
 
                 case "date":
-                    // Apply custom renderer — date cells are still text-based visually.
                     return {
                         type:          "date",
                         renderer:      rendererName,
@@ -118,11 +163,11 @@ export const SheetGrid = memo(function SheetGrid({
                         source:   Array.isArray(col.source) && col.source.length > 0
                                     ? col.source
                                     : ["Option 1", "Option 2", "Option 3"],
-                        strict:       true,   // only allow values from source list
+                        strict:       true,
                         allowInvalid: false,
                     };
 
-                default: // text
+                default:
                     return {
                         type:     "text",
                         renderer: rendererName,
@@ -132,21 +177,26 @@ export const SheetGrid = memo(function SheetGrid({
             }
         });
 
-        // Header labels — plain text only, no icons or emojis
-        const headerLabels = cols.map(col => {
-            return String(col.header || "")
+        const headerLabels = cols.map(col =>
+            String(col.header || "")
                 .replace(/&/g, "&amp;")
                 .replace(/</g, "&lt;")
                 .replace(/>/g, "&gt;")
-                .replace(/"/g, "&quot;");
-        });
+                .replace(/"/g, "&quot;")
+        );
 
         return { hotColumns: hotCols, hotColHeaders: headerLabels };
     }, [sheet.columns, isEditable, colHeaders, rendererName]);
 
-    // ── Build row headers ──────────────────────────────────────────────────
+    // ── Row labels ─────────────────────────────────────────────────────────
     const rowLabels    = sheet.rowLabels || [];
     const hasRowLabels = rowLabels.length > 0;
+
+    // Auto-fit: recalculate width whenever labels change
+    const rowHeaderWidth = useMemo(
+        () => calcRowHeaderWidth(rowLabels, hasRowLabels),
+        [rowLabels, hasRowLabels]
+    );
 
     const gridData = useMemo(() => {
         const fullData = deepClone(sheet.data);
@@ -154,18 +204,19 @@ export const SheetGrid = memo(function SheetGrid({
         return fullData.slice(0, rowLabels.length);
     }, [sheet.data, rowLabels.length, hasRowLabels]);
 
+    // Row header renderer: function for custom labels, boolean for default numbers
     const hotRowHeaders = useMemo(() => {
         if (!hasRowLabels) return rowHeaders;
         return (rowIndex) => rowLabels[rowIndex] ?? "";
     }, [rowLabels, hasRowLabels, rowHeaders]);
 
-    // ── cells callback — only when no custom columns defined ──────────────
-    // Applies our custom renderer to all cells in the default A-Z mode.
+    // ── cells callback ─────────────────────────────────────────────────────
     const cells = useCallback(() => {
         if (sheet.columns?.length) return {};
         return { renderer: rendererName };
     }, [rendererName, sheet.columns]);
 
+    // ── HotTable event handlers ────────────────────────────────────────────
     const afterChange = useCallback((changes, source) => {
         if (source === "loadData" || !changes || !onCellChange) return;
         const hot = gridRef.current?.hotInstance;
@@ -210,6 +261,7 @@ export const SheetGrid = memo(function SheetGrid({
             colHeaders={hotColHeaders}
             columns={hotColumns}
             rowHeaders={hotRowHeaders}
+            rowHeaderWidth={rowHeaderWidth}
             width="100%"
             height={height}
             colWidths={colWidths}
