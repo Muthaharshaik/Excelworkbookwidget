@@ -291,87 +291,113 @@
 /* ── 4. Toolbar ────────────────────────────────────────────────────────────── */
 
 .eww-toolbar {
+    display:        flex;
+    align-items:    center;
+    gap:            2px;
+    height:         42px;
+    padding:        0 10px;
+    background:     #fafbfc;
+    border-bottom:  1px solid #e8edf2;
+    flex-shrink:    0;
+    flex-wrap:      wrap;
+    box-shadow:     0 1px 0 #e8edf2;
+}
+
+/* Group: visually clusters related buttons with a subtle background pill */
+.eww-toolbar__group {
     display:       flex;
     align-items:   center;
-    gap:           2px;
-    height:        var(--eww-toolbar-height);
-    padding:       0 8px;
-    background:    var(--eww-color-bg);
-    border-bottom: 1px solid var(--eww-color-border);
-    flex-shrink:   0;
-    flex-wrap:     wrap;
-    box-shadow:    var(--eww-shadow-toolbar);
+    gap:           1px;
+    background:    transparent;
+    border-radius: var(--eww-radius-sm);
+    padding:       1px;
 }
 
 .eww-toolbar__divider {
-    width:      1px;
-    height:     20px;
-    background: var(--eww-color-border-dark);
-    margin:     0 4px;
+    width:       1px;
+    height:      22px;
+    background:  #dde3ea;
+    margin:      0 5px;
     flex-shrink: 0;
+    border-radius: 1px;
 }
 
+/* Base toolbar button */
 .eww-toolbar__btn {
     display:         flex;
     align-items:     center;
     justify-content: center;
-    width:           28px;
-    height:          28px;
+    width:           30px;
+    height:          30px;
     padding:         0;
     background:      transparent;
     border:          1px solid transparent;
     border-radius:   var(--eww-radius-sm);
     cursor:          pointer;
-    color:           var(--eww-color-text);
+    color:           #44546a;
     font-size:       13px;
     font-family:     var(--eww-font-family);
-    transition:      background 0.1s, border-color 0.1s;
+    font-weight:     600;
+    transition:      background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
     flex-shrink:     0;
+    position:        relative;
+    user-select:     none;
 }
 
 .eww-toolbar__btn:hover:not(:disabled) {
-    background:   var(--eww-color-tab-hover);
-    border-color: var(--eww-color-border);
+    background:   #eef2f7;
+    border-color: #d0d9e4;
+    color:        #1e293b;
 }
 
 .eww-toolbar__btn:active:not(:disabled) {
-    background: var(--eww-color-tab-bg);
+    background:   #e2e8f0;
+    border-color: #b8c5d4;
 }
 
 .eww-toolbar__btn--active {
-    background:   var(--eww-color-tab-bg);
-    border-color: var(--eww-color-border-dark);
+    background:   #dbeafe;
+    border-color: #93c5fd;
+    color:        #1d4ed8;
 }
 
-.eww-toolbar__btn:disabled {
-    opacity: 0.4;
-    cursor:  default;
+.eww-toolbar__btn--active:hover {
+    background:   #bfdbfe;
+    border-color: #60a5fa;
+    color:        #1d4ed8;
 }
 
-/* Wide toolbar buttons (e.g. font size selector) */
-.eww-toolbar__select {
-    height:      28px;
-    padding:     0 6px;
-    background:  var(--eww-color-bg);
-    border:      1px solid var(--eww-color-border);
-    border-radius: var(--eww-radius-sm);
-    font-size:   12px;
-    color:       var(--eww-color-text);
-    cursor:      pointer;
-    outline:     none;
+.eww-toolbar__btn:disabled,
+.eww-toolbar__btn--disabled {
+    opacity: 0.38;
+    cursor:  not-allowed;
 }
 
-.eww-toolbar__select:hover {
-    border-color: var(--eww-color-border-dark);
+/* Color button — taller to fit icon + swatch bar */
+.eww-toolbar__color-btn {
+    width:       32px;
+    height:      30px;
+    flex-direction: column;
+    gap:         1px;
+    padding:     4px 4px 3px;
 }
 
-/* Color swatch inside toolbar buttons */
-.eww-toolbar__swatch {
-    width:        14px;
-    height:       14px;
+.eww-toolbar__color-btn__inner {
+    display:        flex;
+    flex-direction: column;
+    align-items:    center;
+    gap:            2px;
+    width:          100%;
+}
+
+/* Thin color bar at the bottom of the color buttons */
+.eww-toolbar__color-swatch {
+    display:       block;
+    width:         16px;
+    height:        3px;
     border-radius: 2px;
-    border:       1px solid rgba(0,0,0,0.2);
-    display:      inline-block;
+    border:        1px solid rgba(0,0,0,0.15);
+    flex-shrink:   0;
 }
 
 /* ── 5. Grid Wrapper ───────────────────────────────────────────────────────── */
