@@ -185,7 +185,7 @@ export function Toolbar({ hotRef, activeSheet, onMetaChange, disabled }) {
             <Divider />
 
             {/* ── Merge group ───────────────────────────────────────── */}
-            <ToolbarGroup>
+            {/* <ToolbarGroup>
                 <ToolbarBtn title="Merge selected cells"   disabled={disabled} onClick={mergeCells}>
                     <IconMerge />
                 </ToolbarBtn>
@@ -194,7 +194,7 @@ export function Toolbar({ hotRef, activeSheet, onMetaChange, disabled }) {
                 </ToolbarBtn>
             </ToolbarGroup>
 
-            <Divider />
+            <Divider /> */}
 
             {/* ── Clear formatting ──────────────────────────────────── */}
             <ToolbarGroup>

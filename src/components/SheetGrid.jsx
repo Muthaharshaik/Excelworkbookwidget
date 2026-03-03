@@ -11,9 +11,16 @@
  * canvas and pass rowHeaderWidth to HotTable so the frozen row-header
  * pane is exactly wide enough. Without this HotTable defaults to ~50px,
  * labels get cropped and the row/column borders misalign.
+ *
+ * TAB NAVIGATION FIX:
+ * HotTable's Tab shortcut has preventDefault:false, so the browser's native
+ * Tab (moving DOM focus to the next element) fires alongside HT and wins.
+ * Fix: native capture-phase keydown listener on the container div calls
+ * preventDefault() to keep focus in the grid, then manually moves the
+ * cell selection using hot.selectCell(). Shift+Tab moves backwards.
  */
 
-import { createElement, useRef, useCallback, memo, useMemo } from "react";
+import { createElement, useRef, useCallback, useEffect, memo, useMemo } from "react";
 import { HotTable }    from "@handsontable/react";
 import Handsontable    from "handsontable";
 import "handsontable/dist/handsontable.full.min.css";
@@ -250,10 +257,60 @@ export const SheetGrid = memo(function SheetGrid({
         onMetaChange(sheet.sheetId, { ...sheet.cellMeta, _mergedCells: mergedCells });
     }, [sheet.sheetId, sheet.cellMeta, onMetaChange, gridRef]);
 
+    // Tab navigation fix.
+    //
+    // Root cause: HotTable registers its Tab shortcut with preventDefault:false,
+    // meaning the browser's native Tab behavior (moving DOM focus to the next
+    // focusable element outside the grid) fires alongside HotTable's own handler.
+    // The browser wins — focus leaves the grid before HotTable moves the selection.
+    //
+    // Fix: attach a native capture-phase keydown listener on the grid container.
+    // Capture phase fires BEFORE any bubble-phase listeners (including Mendix's
+    // document-level handler). We call preventDefault() to stop the browser
+    // moving focus, but do NOT call stopPropagation — HotTable's own shortcut
+    // manager still receives the event through its own pipeline and moves the
+    // cell selection normally.
+    const containerRef = useRef(null);
+
+    useEffect(() => {
+        const el = containerRef.current;
+        if (!el) return;
+
+        const onKeyDown = (event) => {
+            if (event.key !== "Tab") return;
+
+            // Only act when focus is inside our grid container
+            if (!el.contains(document.activeElement)) return;
+
+            // All HotTable and Mendix listeners are bubble-phase on document/documentElement.
+            // This listener is capture-phase on document — it fires BEFORE all of them.
+            // We block the event entirely, then manually call HotTable's internal
+            // selection.transformStart() — the exact same method HotTable uses for Tab.
+            event.preventDefault();
+            event.stopImmediatePropagation();
+
+            const hot = gridRef.current?.hotInstance;
+            if (!hot || !hot.selection) return;
+
+            if (event.shiftKey) {
+                // Shift+Tab → move left
+                hot.selection.transformStart(0, -1);
+            } else {
+                // Tab → move right
+                hot.selection.transformStart(0, 1);
+            }
+        };
+
+        // capture:true → fires before ALL bubble-phase listeners (Mendix + HotTable)
+        document.addEventListener("keydown", onKeyDown, { capture: true });
+        return () => document.removeEventListener("keydown", onKeyDown, { capture: true });
+    }, [gridRef]);
+
     const colWidths  = sheet.colWidths?.length  ? sheet.colWidths  : DEFAULT_COL_WIDTH;
     const rowHeights = sheet.rowHeights?.length ? sheet.rowHeights : DEFAULT_ROW_HEIGHT;
 
     return (
+        <div ref={containerRef} style={{ width: "100%", height: "100%" }}>
         <HotTable
             ref={gridRef}
             data={gridData}
@@ -288,5 +345,6 @@ export const SheetGrid = memo(function SheetGrid({
             afterMergeCells={afterMergeCells}
             afterUnmergeCells={afterMergeCells}
         />
+        </div>
     );
 });
