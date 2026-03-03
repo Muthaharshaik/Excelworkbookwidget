@@ -88,6 +88,8 @@ export const SheetGrid = memo(function SheetGrid({
     onCellChange,
     onMetaChange,
     onDimensionChange,
+    onAuditLog,
+    auditJson,
 }) {
     if (!sheet) return null;
 
@@ -228,8 +230,59 @@ export const SheetGrid = memo(function SheetGrid({
         if (source === "loadData" || !changes || !onCellChange) return;
         const hot = gridRef.current?.hotInstance;
         if (!hot) return;
+
+        // ── Save cell data ─────────────────────────────────────────────
         onCellChange(sheet.sheetId, hot.getData());
-    }, [sheet.sheetId, onCellChange, gridRef]);
+
+        // ── Audit log ──────────────────────────────────────────────────
+        // Only fire if onAuditLog action is wired in Studio Pro.
+        // Skip if every change has identical old/new value (e.g. paste same value).
+        if (!onAuditLog || !auditJson) return;
+
+        const cols      = sheet.columns  || [];
+        const rowLabels = sheet.rowLabels || [];
+
+        const auditChanges = changes
+            .filter(([, , oldVal, newVal]) => {
+                // Skip if value did not actually change
+                const o = oldVal === null || oldVal === undefined ? "" : String(oldVal);
+                const n = newVal === null || newVal === undefined ? "" : String(newVal);
+                return o !== n;
+            })
+            .map(([row, col, oldVal, newVal]) => ({
+                row,
+                col,
+                // colHeader: use configured column header if available, else A/B/C letter
+                colHeader: cols[col]?.header
+                    || String.fromCharCode(65 + (col % 26)),
+                // rowLabel: use custom row label if available, else 1-based row number
+                rowLabel:  rowLabels[row] || String(row + 1),
+                oldValue:  oldVal === null || oldVal === undefined ? "" : String(oldVal),
+                newValue:  newVal === null || newVal === undefined ? "" : String(newVal),
+            }));
+
+        if (auditChanges.length === 0) return; // nothing actually changed
+
+        const auditPayload = JSON.stringify({
+            sheetId:   sheet.sheetId,
+            sheetName: sheet.sheetName,
+            changes:   auditChanges,
+        });
+
+        // Write audit JSON to the Mendix attribute then fire the microflow.
+        // auditJson is the Mendix attribute prop (same pattern as sheetJson).
+        try {
+            if (auditJson.status === "available" && typeof auditJson.setValue === "function") {
+                auditJson.setValue(auditPayload);
+                if (onAuditLog.canExecute) {
+                    onAuditLog.execute();
+                }
+            }
+        } catch (err) {
+            console.error("[ExcelWidget] Audit log failed:", err.message);
+        }
+    }, [sheet.sheetId, sheet.sheetName, sheet.columns, sheet.rowLabels,
+        onCellChange, onAuditLog, auditJson, gridRef]);
 
     const afterColumnResize = useCallback(() => {
         if (!onDimensionChange) return;

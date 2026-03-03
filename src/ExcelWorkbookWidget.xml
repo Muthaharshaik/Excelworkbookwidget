@@ -117,6 +117,23 @@
                 </description>
             </property>
 
+            <property key="onAuditLog" type="action" required="false">
+                <caption>On Audit Log</caption>
+                <description>
+                    Action to be triggered for Auditlogs.
+                </description>
+            </property>
+
+            <property key="auditJson" type="attribute" required="false">
+                <caption>Audit JSON</caption>
+                <description>
+                   Audit JSON
+                </description>
+                <attributeTypes>
+                    <attributeType name="String"/>
+                </attributeTypes>
+            </property>
+
         </propertyGroup>
 
         <!-- ═══════════════════════════════════════════

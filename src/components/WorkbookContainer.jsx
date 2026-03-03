@@ -20,7 +20,7 @@ export function WorkbookContainer(props) {
     const {
         sheetId, sheetName, sheetJson,
         currentUserId, accessUserId, permissionType, isAdmin,
-        onSheetChange,
+        onSheetChange, onAuditLog, auditJson,
         gridHeight = 600, rowCount = 50,
         showToolbar = true, showSheetName = true,
         rowHeaders = true, colHeaders = true,
@@ -235,6 +235,8 @@ export function WorkbookContainer(props) {
                     onCellChange={(_, newData) => handleCellChange(newData)}
                     onMetaChange={(_, newMeta) => handleMetaChange(newMeta)}
                     onDimensionChange={(_, dims) => handleDimensionChange(dims)}
+                    onAuditLog={onAuditLog}
+                    auditJson={auditJson}
                 />
             </div>
 
