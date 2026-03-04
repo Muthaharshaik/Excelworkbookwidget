@@ -16,7 +16,8 @@
  *   7. Read-Only Badge
  *   8. Saving Indicator
  *   9. Handsontable Overrides
- *  10. Utility Classes
+ *  10. Validation Error Toast
+ *  11. Utility Classes
  */
 
 /* ── 1. CSS Variables ──────────────────────────────────────────────────────── */
@@ -606,7 +607,154 @@
     z-index: 22 !important;
 }
 
-/* ── 10. Utility Classes ───────────────────────────────────────────────────── */
+/* ── 10. Validation Error Toast ────────────────────────────────────────────── */
+
+/*
+ * Shown inside the grid wrapper (position:relative) whenever a cell fails
+ * type validation (numeric, date, dropdown). HotTable already marks the
+ * cell red with the htInvalid class — this adds a human-readable explanation.
+ * Auto-dismisses after 4 seconds or on the ✕ button.
+ */
+
+.eww-validation-toast {
+    position:      absolute;
+    bottom:        16px;
+    left:          50%;
+    transform:     translateX(-50%);
+    z-index:       999;
+    display:       flex;
+    align-items:   flex-start;
+    gap:           10px;
+    min-width:     300px;
+    max-width:     480px;
+    padding:       12px 14px;
+    background:    #fff8f0;
+    border:        1px solid #f4a24a;
+    border-left:   4px solid #e67e22;
+    border-radius: 8px;
+    box-shadow:    0 4px 16px rgba(0,0,0,0.12);
+    animation:     eww-toastIn 0.2s ease;
+    pointer-events: auto;
+}
+
+@keyframes eww-toastIn {
+    from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(0);   }
+}
+
+.eww-validation-toast__icon {
+    font-size:   18px;
+    line-height: 1;
+    color:       #e67e22;
+    flex-shrink: 0;
+    margin-top:  1px;
+}
+
+.eww-validation-toast__body {
+    flex: 1;
+    min-width: 0;
+}
+
+.eww-validation-toast__title {
+    font-size:   13px;
+    font-weight: 600;
+    color:       #7a3e00;
+    margin-bottom: 3px;
+    line-height: 1.4;
+}
+
+.eww-validation-toast__title strong {
+    color: #c0392b;
+}
+
+.eww-validation-toast__detail {
+    font-size:   12px;
+    color:       #8a5500;
+    line-height: 1.5;
+}
+
+.eww-validation-toast__entered {
+    font-weight:  600;
+    font-family:  monospace;
+    font-size:    12px;
+    color:        #c0392b;
+    background:   #fde8e8;
+    padding:      1px 5px;
+    border-radius: 3px;
+}
+
+.eww-validation-toast__type {
+    font-weight: 600;
+    color:       #1a5276;
+}
+
+.eww-validation-toast__hint {
+    color:       #666;
+    font-style:  italic;
+}
+
+.eww-validation-toast__close {
+    background:  transparent;
+    border:      none;
+    cursor:      pointer;
+    color:       #a0522d;
+    font-size:   13px;
+    line-height: 1;
+    padding:     2px 4px;
+    border-radius: 3px;
+    flex-shrink: 0;
+    margin-top:  1px;
+    opacity:     0.7;
+    transition:  opacity 0.1s, background 0.1s;
+}
+
+.eww-validation-toast__close:hover {
+    opacity:    1;
+    background: rgba(230, 126, 34, 0.15);
+}
+
+/* HotTable's built-in invalid cell highlight — make it more visible */
+.eww-grid-wrapper .htInvalid {
+    background-color: #fde8e8 !important;
+    outline:          2px solid #e74c3c !important;
+    outline-offset:   -2px;
+}
+
+/* ── 10. Validation — Invalid Cell Highlight ──────────────────────────────── */
+
+/*
+ * HotTable adds the htInvalid class to cells that fail validation
+ * (numeric, date, dropdown with allowInvalid:true).
+ * The widget blocks saving invalid values via the afterChange + invalidCellsRef
+ * approach — this CSS just makes the feedback clearly visible to the user.
+ */
+
+/* Red background + red border on invalid cells */
+.eww-grid-wrapper .htInvalid {
+    background-color: #fde8e8 !important;
+    outline:          2px solid #e74c3c !important;
+    outline-offset:   -2px;
+}
+
+/* Keep red while the cell is being edited */
+.eww-grid-wrapper .htInvalid.current {
+    background-color: #fde8e8 !important;
+}
+
+/* ── 10. Validation — Invalid Cell Highlight ──────────────────────────────── */
+
+/*
+ * HotTable adds htInvalid to cells that fail type validation.
+ * We use allowInvalid:true so the cell turns red instead of silently
+ * reverting. The invalid value is blocked from saving in afterChange.
+ */
+.eww-grid-wrapper .htInvalid {
+    background-color: #fde8e8 !important;
+    outline:          2px solid #e74c3c !important;
+    outline-offset:   -2px;
+}
+
+/* ── 11. Utility Classes ───────────────────────────────────────────────────── */
 
 .eww-sr-only {
     position: absolute;

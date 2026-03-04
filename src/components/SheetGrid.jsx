@@ -18,6 +18,12 @@
  * Fix: native capture-phase keydown listener on the container div calls
  * preventDefault() to keep focus in the grid, then manually moves the
  * cell selection using hot.selectCell(). Shift+Tab moves backwards.
+ *
+ * VALIDATION FIX:
+ * allowInvalid:true → HotTable shows htInvalid (red cell) when a typed
+ * column receives the wrong data type. We track invalid cells in a ref
+ * (NOT state — avoids React error #185) and patch getData() in afterChange
+ * so invalid values are never saved to React state or Mendix.
  */
 
 import { createElement, useRef, useCallback, useEffect, memo, useMemo } from "react";
@@ -99,6 +105,11 @@ export const SheetGrid = memo(function SheetGrid({
     const cellMetaRef   = useRef(sheet.cellMeta);
     cellMetaRef.current = sheet.cellMeta;
 
+    // Tracks cells that currently have invalid values.
+    // Key = "row_col", value = true.
+    // Using a ref (NOT state) to avoid React setState inside HT hooks → error #185.
+    const invalidCellsRef = useRef(new Map());
+
     // ── Register custom renderer ───────────────────────────────────────────
     // Only used for text / numeric / date columns.
     // Checkbox and dropdown columns must NOT use this — they need
@@ -134,12 +145,15 @@ export const SheetGrid = memo(function SheetGrid({
 
                 case "numeric":
                     return {
-                        type:         "numeric",
-                        renderer:     rendererName,
-                        width:        col.width || DEFAULT_COL_WIDTH,
-                        readOnly:     baseReadOnly,
+                        type:          "numeric",
+                        renderer:      rendererName,
+                        width:         col.width || DEFAULT_COL_WIDTH,
+                        readOnly:      baseReadOnly,
                         numericFormat: { pattern: col.format || DEFAULT_NUMERIC_FORMAT },
-                        allowInvalid: false,
+                        // allowInvalid:true → HT marks cell red (htInvalid class)
+                        // and keeps focus. We block the invalid value from saving
+                        // in afterChange via invalidCellsRef.
+                        allowInvalid:  true,
                     };
 
                 case "date":
@@ -150,7 +164,7 @@ export const SheetGrid = memo(function SheetGrid({
                         readOnly:      baseReadOnly,
                         dateFormat:    col.format || DEFAULT_DATE_FORMAT,
                         correctFormat: true,
-                        allowInvalid:  false,
+                        allowInvalid:  true,
                     };
 
                 case "checkbox":
@@ -166,14 +180,14 @@ export const SheetGrid = memo(function SheetGrid({
                     // DO NOT apply custom renderer — HotTable needs its own
                     // autocomplete/dropdown renderer for the select UI.
                     return {
-                        type:     "dropdown",
-                        width:    col.width || DEFAULT_COL_WIDTH,
-                        readOnly: baseReadOnly,
-                        source:   Array.isArray(col.source) && col.source.length > 0
-                                    ? col.source
-                                    : ["Option 1", "Option 2", "Option 3"],
+                        type:         "dropdown",
+                        width:        col.width || DEFAULT_COL_WIDTH,
+                        readOnly:     baseReadOnly,
+                        source:       Array.isArray(col.source) && col.source.length > 0
+                                          ? col.source
+                                          : ["Option 1", "Option 2", "Option 3"],
                         strict:       true,
-                        allowInvalid: false,
+                        allowInvalid: true,
                     };
 
                 default:
@@ -231,20 +245,62 @@ export const SheetGrid = memo(function SheetGrid({
         const hot = gridRef.current?.hotInstance;
         if (!hot) return;
 
+        // ── Validation gate ────────────────────────────────────────────
+        // allowInvalid:true means HT keeps invalid values in its internal data.
+        // hot.getData() returns the FULL grid — including cells that were marked
+        // invalid in a PREVIOUS edit (not just the current changes batch).
+        //
+        // Example of the bug this fixes:
+        //   1. User types "abc" in a Number cell → marked invalid, not saved ✓
+        //   2. User edits a different valid cell → afterChange fires for that cell
+        //   3. dataToSave = hot.getData() → includes "abc" still sitting in HT data
+        //   4. Without this fix, "abc" gets saved to Mendix ✗
+        //
+        // Fix: always patch ALL currently invalid cells when building dataToSave,
+        // regardless of whether they appear in the current changes batch.
+        const invalids = invalidCellsRef.current;
+
+        // If ALL changes in this batch are invalid, nothing valid to save at all
+        const hasValidChange = changes.some(([r, c]) => !invalids.has(`${r}_${c}`));
+        if (!hasValidChange && invalids.size > 0 && changes.every(([r, c]) => invalids.has(`${r}_${c}`))) return;
+
+        // Build a safe copy of the grid data with ALL invalid cells set to null
+        // (we use null because we don't have the original value for cells that
+        // were invalid before this change batch — null is safer than wrong data)
+        let dataToSave;
+        if (invalids.size > 0) {
+            dataToSave = hot.getData().map(row => [...row]);
+            // Patch cells invalid in the current batch — we have their old values
+            changes.forEach(([r, c, oldValue]) => {
+                if (invalids.has(`${r}_${c}`)) {
+                    dataToSave[r][c] = oldValue ?? null;
+                }
+            });
+            // Patch any other currently invalid cells we DON'T have old values for
+            // Set them to null — better than saving a wrong-type value
+            invalids.forEach((_, key) => {
+                const [r, c] = key.split("_").map(Number);
+                const alreadyPatched = changes.some(([cr, cc]) => cr === r && cc === c);
+                if (!alreadyPatched) {
+                    dataToSave[r][c] = null;
+                }
+            });
+        } else {
+            dataToSave = hot.getData();
+        }
+
         // ── Save cell data ─────────────────────────────────────────────
-        onCellChange(sheet.sheetId, hot.getData());
+        onCellChange(sheet.sheetId, dataToSave);
 
         // ── Audit log ──────────────────────────────────────────────────
-        // Only fire if onAuditLog action is wired in Studio Pro.
-        // Skip if every change has identical old/new value (e.g. paste same value).
         if (!onAuditLog || !auditJson) return;
 
-        const cols      = sheet.columns  || [];
-        const rowLabels = sheet.rowLabels || [];
+        const cols         = sheet.columns  || [];
+        const rowLabelList = sheet.rowLabels || [];
 
         const auditChanges = changes
-            .filter(([, , oldVal, newVal]) => {
-                // Skip if value did not actually change
+            .filter(([r, c, oldVal, newVal]) => {
+                if (invalids.has(`${r}_${c}`)) return false; // skip invalid
                 const o = oldVal === null || oldVal === undefined ? "" : String(oldVal);
                 const n = newVal === null || newVal === undefined ? "" : String(newVal);
                 return o !== n;
@@ -252,16 +308,13 @@ export const SheetGrid = memo(function SheetGrid({
             .map(([row, col, oldVal, newVal]) => ({
                 row,
                 col,
-                // colHeader: use configured column header if available, else A/B/C letter
-                colHeader: cols[col]?.header
-                    || String.fromCharCode(65 + (col % 26)),
-                // rowLabel: use custom row label if available, else 1-based row number
-                rowLabel:  rowLabels[row] || String(row + 1),
+                colHeader: cols[col]?.header || String.fromCharCode(65 + (col % 26)),
+                rowLabel:  rowLabelList[row]  || String(row + 1),
                 oldValue:  oldVal === null || oldVal === undefined ? "" : String(oldVal),
                 newValue:  newVal === null || newVal === undefined ? "" : String(newVal),
             }));
 
-        if (auditChanges.length === 0) return; // nothing actually changed
+        if (auditChanges.length === 0) return;
 
         const auditPayload = JSON.stringify({
             sheetId:   sheet.sheetId,
@@ -269,8 +322,6 @@ export const SheetGrid = memo(function SheetGrid({
             changes:   auditChanges,
         });
 
-        // Write audit JSON to the Mendix attribute then fire the microflow.
-        // auditJson is the Mendix attribute prop (same pattern as sheetJson).
         try {
             if (auditJson.status === "available" && typeof auditJson.setValue === "function") {
                 auditJson.setValue(auditPayload);
@@ -310,51 +361,40 @@ export const SheetGrid = memo(function SheetGrid({
         onMetaChange(sheet.sheetId, { ...sheet.cellMeta, _mergedCells: mergedCells });
     }, [sheet.sheetId, sheet.cellMeta, onMetaChange, gridRef]);
 
-    // Tab navigation fix.
-    //
-    // Root cause: HotTable registers its Tab shortcut with preventDefault:false,
-    // meaning the browser's native Tab behavior (moving DOM focus to the next
-    // focusable element outside the grid) fires alongside HotTable's own handler.
-    // The browser wins — focus leaves the grid before HotTable moves the selection.
-    //
-    // Fix: attach a native capture-phase keydown listener on the grid container.
-    // Capture phase fires BEFORE any bubble-phase listeners (including Mendix's
-    // document-level handler). We call preventDefault() to stop the browser
-    // moving focus, but do NOT call stopPropagation — HotTable's own shortcut
-    // manager still receives the event through its own pipeline and moves the
-    // cell selection normally.
+    // afterValidate fires synchronously inside HT's own validation cycle.
+    // MUST only mutate a ref here — never call setState.
+    // setState here → React re-render → HT re-validates → afterValidate again → error #185.
+    const afterValidate = useCallback((isValid, value, row, prop) => {
+        const col = typeof prop === "number" ? prop : parseInt(prop, 10);
+        const cols = sheet.columns || [];
+        if (!cols[col]) return; // no typed column — nothing to validate
+        const key = `${row}_${col}`;
+        if (isValid) {
+            invalidCellsRef.current.delete(key);
+        } else {
+            invalidCellsRef.current.set(key, true);
+        }
+    }, [sheet.columns]);
+
+    // Tab navigation fix — see header comment for full explanation.
     const containerRef = useRef(null);
 
     useEffect(() => {
         const el = containerRef.current;
         if (!el) return;
-
         const onKeyDown = (event) => {
             if (event.key !== "Tab") return;
-
-            // Only act when focus is inside our grid container
             if (!el.contains(document.activeElement)) return;
-
-            // All HotTable and Mendix listeners are bubble-phase on document/documentElement.
-            // This listener is capture-phase on document — it fires BEFORE all of them.
-            // We block the event entirely, then manually call HotTable's internal
-            // selection.transformStart() — the exact same method HotTable uses for Tab.
             event.preventDefault();
             event.stopImmediatePropagation();
-
             const hot = gridRef.current?.hotInstance;
             if (!hot || !hot.selection) return;
-
             if (event.shiftKey) {
-                // Shift+Tab → move left
                 hot.selection.transformStart(0, -1);
             } else {
-                // Tab → move right
                 hot.selection.transformStart(0, 1);
             }
         };
-
-        // capture:true → fires before ALL bubble-phase listeners (Mendix + HotTable)
         document.addEventListener("keydown", onKeyDown, { capture: true });
         return () => document.removeEventListener("keydown", onKeyDown, { capture: true });
     }, [gridRef]);
@@ -397,6 +437,7 @@ export const SheetGrid = memo(function SheetGrid({
             afterRowResize={afterRowResize}
             afterMergeCells={afterMergeCells}
             afterUnmergeCells={afterMergeCells}
+            afterValidate={afterValidate}
         />
         </div>
     );
