@@ -9,21 +9,17 @@
  * ROW HEADER WIDTH FIX:
  * When custom row labels are set, we measure the longest label with a
  * canvas and pass rowHeaderWidth to HotTable so the frozen row-header
- * pane is exactly wide enough. Without this HotTable defaults to ~50px,
- * labels get cropped and the row/column borders misalign.
+ * pane is exactly wide enough.
  *
  * TAB NAVIGATION FIX:
- * HotTable's Tab shortcut has preventDefault:false, so the browser's native
- * Tab (moving DOM focus to the next element) fires alongside HT and wins.
- * Fix: native capture-phase keydown listener on the container div calls
- * preventDefault() to keep focus in the grid, then manually moves the
- * cell selection using hot.selectCell(). Shift+Tab moves backwards.
+ * Native capture-phase keydown listener prevents browser Tab from stealing
+ * focus away from the grid.
  *
- * VALIDATION FIX:
- * allowInvalid:true → HotTable shows htInvalid (red cell) when a typed
- * column receives the wrong data type. We track invalid cells in a ref
- * (NOT state — avoids React error #185) and patch getData() in afterChange
- * so invalid values are never saved to React state or Mendix.
+ * HYPERFORMULA:
+ * hfRef is passed in from WorkbookContainer (one instance per widget mount).
+ * Passed to HotTable via the formulas prop. SheetGrid is only rendered after
+ * hfReady=true (gated in WorkbookContainer) so HotTable always mounts with
+ * a live HF engine — formulas activate correctly on first render.
  */
 
 import { createElement, useRef, useCallback, useEffect, memo, useMemo } from "react";
@@ -42,8 +38,6 @@ import {
 import { cellKey, deepClone } from "../utils/helpers";
 
 // ── Row header width helper ────────────────────────────────────────────────────
-// Uses an offscreen canvas to measure text accurately.
-// Falls back to a character-width estimate if canvas is unavailable.
 
 let _measureCanvas = null;
 
@@ -54,22 +48,15 @@ function measureTextPx(text, font) {
         ctx.font  = font;
         return ctx.measureText(String(text)).width;
     } catch {
-        return String(text).length * 7.5; // ~7.5px per char at 13px
+        return String(text).length * 7.5;
     }
 }
 
-/**
- * Calculates the pixel width the row header column needs so all labels fit.
- *
- *  - When using default numeric row numbers → returns 50 (HotTable default)
- *  - When using custom string labels → measures the longest label and adds
- *    horizontal padding so text is never clipped
- */
 function calcRowHeaderWidth(labels, hasCustomLabels) {
     if (!hasCustomLabels || labels.length === 0) return 50;
 
     const FONT      = "500 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
-    const PAD       = 20; // 10px left + 10px right
+    const PAD       = 20;
     const MIN       = 60;
     const MAX       = 240;
 
@@ -91,6 +78,7 @@ export const SheetGrid = memo(function SheetGrid({
     rowHeaders,
     colHeaders,
     hotRef,
+    hfRef,
     onCellChange,
     onMetaChange,
     onDimensionChange,
@@ -105,15 +93,19 @@ export const SheetGrid = memo(function SheetGrid({
     const cellMetaRef   = useRef(sheet.cellMeta);
     cellMetaRef.current = sheet.cellMeta;
 
-    // Tracks cells that currently have invalid values.
-    // Key = "row_col", value = true.
-    // Using a ref (NOT state) to avoid React setState inside HT hooks → error #185.
     const invalidCellsRef = useRef(new Map());
 
+    // ── HyperFormula config ────────────────────────────────────────────────
+    // hfRef.current is guaranteed to be populated here because WorkbookContainer
+    // gates SheetGrid rendering on hfReady=true.
+    const formulasConfig = hfRef?.current
+        ? {
+            engine:    hfRef.current,
+            sheetName: sheet.sheetName || "Sheet",
+          }
+        : false;
+
     // ── Register custom renderer ───────────────────────────────────────────
-    // Only used for text / numeric / date columns.
-    // Checkbox and dropdown columns must NOT use this — they need
-    // HotTable's native renderers to display correctly.
     useMemo(() => {
         Handsontable.renderers.registerRenderer(
             rendererName,
@@ -142,7 +134,6 @@ export const SheetGrid = memo(function SheetGrid({
             const baseReadOnly = col.readOnly || !isEditable;
 
             switch (col.type) {
-
                 case "numeric":
                     return {
                         type:          "numeric",
@@ -150,12 +141,8 @@ export const SheetGrid = memo(function SheetGrid({
                         width:         col.width || DEFAULT_COL_WIDTH,
                         readOnly:      baseReadOnly,
                         numericFormat: { pattern: col.format || DEFAULT_NUMERIC_FORMAT },
-                        // allowInvalid:true → HT marks cell red (htInvalid class)
-                        // and keeps focus. We block the invalid value from saving
-                        // in afterChange via invalidCellsRef.
                         allowInvalid:  true,
                     };
-
                 case "date":
                     return {
                         type:          "date",
@@ -166,19 +153,13 @@ export const SheetGrid = memo(function SheetGrid({
                         correctFormat: true,
                         allowInvalid:  true,
                     };
-
                 case "checkbox":
-                    // DO NOT apply custom renderer — HotTable needs its own
-                    // checkbox renderer to draw the actual checkbox input.
                     return {
                         type:     "checkbox",
                         width:    col.width || DEFAULT_COL_WIDTH,
                         readOnly: baseReadOnly,
                     };
-
                 case "dropdown":
-                    // DO NOT apply custom renderer — HotTable needs its own
-                    // autocomplete/dropdown renderer for the select UI.
                     return {
                         type:         "dropdown",
                         width:        col.width || DEFAULT_COL_WIDTH,
@@ -189,7 +170,6 @@ export const SheetGrid = memo(function SheetGrid({
                         strict:       true,
                         allowInvalid: true,
                     };
-
                 default:
                     return {
                         type:     "text",
@@ -215,7 +195,6 @@ export const SheetGrid = memo(function SheetGrid({
     const rowLabels    = sheet.rowLabels || [];
     const hasRowLabels = rowLabels.length > 0;
 
-    // Auto-fit: recalculate width whenever labels change
     const rowHeaderWidth = useMemo(
         () => calcRowHeaderWidth(rowLabels, hasRowLabels),
         [rowLabels, hasRowLabels]
@@ -227,7 +206,6 @@ export const SheetGrid = memo(function SheetGrid({
         return fullData.slice(0, rowLabels.length);
     }, [sheet.data, rowLabels.length, hasRowLabels]);
 
-    // Row header renderer: function for custom labels, boolean for default numbers
     const hotRowHeaders = useMemo(() => {
         if (!hasRowLabels) return rowHeaders;
         return (rowIndex) => rowLabels[rowIndex] ?? "";
@@ -239,45 +217,25 @@ export const SheetGrid = memo(function SheetGrid({
         return { renderer: rendererName };
     }, [rendererName, sheet.columns]);
 
-    // ── HotTable event handlers ────────────────────────────────────────────
+    // ── afterChange ────────────────────────────────────────────────────────
     const afterChange = useCallback((changes, source) => {
         if (source === "loadData" || !changes || !onCellChange) return;
         const hot = gridRef.current?.hotInstance;
         if (!hot) return;
 
-        // ── Validation gate ────────────────────────────────────────────
-        // allowInvalid:true means HT keeps invalid values in its internal data.
-        // hot.getData() returns the FULL grid — including cells that were marked
-        // invalid in a PREVIOUS edit (not just the current changes batch).
-        //
-        // Example of the bug this fixes:
-        //   1. User types "abc" in a Number cell → marked invalid, not saved ✓
-        //   2. User edits a different valid cell → afterChange fires for that cell
-        //   3. dataToSave = hot.getData() → includes "abc" still sitting in HT data
-        //   4. Without this fix, "abc" gets saved to Mendix ✗
-        //
-        // Fix: always patch ALL currently invalid cells when building dataToSave,
-        // regardless of whether they appear in the current changes batch.
         const invalids = invalidCellsRef.current;
 
-        // If ALL changes in this batch are invalid, nothing valid to save at all
         const hasValidChange = changes.some(([r, c]) => !invalids.has(`${r}_${c}`));
         if (!hasValidChange && invalids.size > 0 && changes.every(([r, c]) => invalids.has(`${r}_${c}`))) return;
 
-        // Build a safe copy of the grid data with ALL invalid cells set to null
-        // (we use null because we don't have the original value for cells that
-        // were invalid before this change batch — null is safer than wrong data)
         let dataToSave;
         if (invalids.size > 0) {
             dataToSave = hot.getData().map(row => [...row]);
-            // Patch cells invalid in the current batch — we have their old values
             changes.forEach(([r, c, oldValue]) => {
                 if (invalids.has(`${r}_${c}`)) {
                     dataToSave[r][c] = oldValue ?? null;
                 }
             });
-            // Patch any other currently invalid cells we DON'T have old values for
-            // Set them to null — better than saving a wrong-type value
             invalids.forEach((_, key) => {
                 const [r, c] = key.split("_").map(Number);
                 const alreadyPatched = changes.some(([cr, cc]) => cr === r && cc === c);
@@ -289,10 +247,8 @@ export const SheetGrid = memo(function SheetGrid({
             dataToSave = hot.getData();
         }
 
-        // ── Save cell data ─────────────────────────────────────────────
         onCellChange(sheet.sheetId, dataToSave);
 
-        // ── Audit log ──────────────────────────────────────────────────
         if (!onAuditLog || !auditJson) return;
 
         const cols         = sheet.columns  || [];
@@ -300,7 +256,7 @@ export const SheetGrid = memo(function SheetGrid({
 
         const auditChanges = changes
             .filter(([r, c, oldVal, newVal]) => {
-                if (invalids.has(`${r}_${c}`)) return false; // skip invalid
+                if (invalids.has(`${r}_${c}`)) return false;
                 const o = oldVal === null || oldVal === undefined ? "" : String(oldVal);
                 const n = newVal === null || newVal === undefined ? "" : String(newVal);
                 return o !== n;
@@ -361,13 +317,10 @@ export const SheetGrid = memo(function SheetGrid({
         onMetaChange(sheet.sheetId, { ...sheet.cellMeta, _mergedCells: mergedCells });
     }, [sheet.sheetId, sheet.cellMeta, onMetaChange, gridRef]);
 
-    // afterValidate fires synchronously inside HT's own validation cycle.
-    // MUST only mutate a ref here — never call setState.
-    // setState here → React re-render → HT re-validates → afterValidate again → error #185.
     const afterValidate = useCallback((isValid, value, row, prop) => {
         const col = typeof prop === "number" ? prop : parseInt(prop, 10);
         const cols = sheet.columns || [];
-        if (!cols[col]) return; // no typed column — nothing to validate
+        if (!cols[col]) return;
         const key = `${row}_${col}`;
         if (isValid) {
             invalidCellsRef.current.delete(key);
@@ -376,7 +329,7 @@ export const SheetGrid = memo(function SheetGrid({
         }
     }, [sheet.columns]);
 
-    // Tab navigation fix — see header comment for full explanation.
+    // ── Tab navigation fix ─────────────────────────────────────────────────
     const containerRef = useRef(null);
 
     useEffect(() => {
@@ -404,41 +357,42 @@ export const SheetGrid = memo(function SheetGrid({
 
     return (
         <div ref={containerRef} style={{ width: "100%", height: "100%" }}>
-        <HotTable
-            ref={gridRef}
-            data={gridData}
-            licenseKey={HOT_LICENSE_KEY}
-            colHeaders={hotColHeaders}
-            columns={hotColumns}
-            rowHeaders={hotRowHeaders}
-            rowHeaderWidth={rowHeaderWidth}
-            width="100%"
-            height={height}
-            colWidths={colWidths}
-            rowHeights={rowHeights}
-            readOnly={!isEditable}
-            manualColumnResize={true}
-            manualRowResize={true}
-            contextMenu={isEditable ? CONTEXT_MENU_ITEMS : ["copy"]}
-            multiColumnSorting={true}
-            filters={true}
-            dropdownMenu={true}
-            autoWrapRow={true}
-            autoWrapCol={true}
-            fillHandle={isEditable}
-            copyPaste={true}
-            outsideClickDeselects={false}
-            undo={isEditable}
-            stretchH="last"
-            mergeCells={sheet.mergedCells?.length ? sheet.mergedCells : true}
-            cells={hotColumns ? undefined : cells}
-            afterChange={afterChange}
-            afterColumnResize={afterColumnResize}
-            afterRowResize={afterRowResize}
-            afterMergeCells={afterMergeCells}
-            afterUnmergeCells={afterMergeCells}
-            afterValidate={afterValidate}
-        />
+            <HotTable
+                ref={gridRef}
+                data={gridData}
+                licenseKey={HOT_LICENSE_KEY}
+                formulas={formulasConfig}
+                colHeaders={hotColHeaders}
+                columns={hotColumns}
+                rowHeaders={hotRowHeaders}
+                rowHeaderWidth={rowHeaderWidth}
+                width="100%"
+                height={height}
+                colWidths={colWidths}
+                rowHeights={rowHeights}
+                readOnly={!isEditable}
+                manualColumnResize={true}
+                manualRowResize={true}
+                contextMenu={isEditable ? CONTEXT_MENU_ITEMS : ["copy"]}
+                multiColumnSorting={true}
+                filters={true}
+                dropdownMenu={true}
+                autoWrapRow={true}
+                autoWrapCol={true}
+                fillHandle={isEditable}
+                copyPaste={true}
+                outsideClickDeselects={false}
+                undo={isEditable}
+                stretchH="last"
+                mergeCells={sheet.mergedCells?.length ? sheet.mergedCells : true}
+                cells={hotColumns ? undefined : cells}
+                afterChange={afterChange}
+                afterColumnResize={afterColumnResize}
+                afterRowResize={afterRowResize}
+                afterMergeCells={afterMergeCells}
+                afterUnmergeCells={afterMergeCells}
+                afterValidate={afterValidate}
+            />
         </div>
     );
 });

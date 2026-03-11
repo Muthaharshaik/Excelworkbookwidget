@@ -15,6 +15,7 @@ import { ReadOnlyBadge }       from "./ReadOnlyBadge";
 import { parseSheetJson, serializeSheet } from "../services/dataService";
 import { triggerSheetChange }             from "../services/mendixBridge";
 import { CSS, AUTOSAVE_DEBOUNCE_MS }      from "../utils/constants";
+import { useHyperformula }                from "../hooks/useHyperformula";
 
 export function WorkbookContainer(props) {
     const {
@@ -40,11 +41,6 @@ export function WorkbookContainer(props) {
     const canEditCells   = isAdminValue || (isUserMatch && permissionValue === "Edit");
     const canEditColumns = isAdminValue;
 
-    console.info("[ExcelWidget] Access Debug:", {
-        currentUserValue, accessUserValue, permissionValue,
-        isAdminValue, isUserMatch, canEditCells, canEditColumns,
-    });
-
     const [sheetData, setSheetData]             = useState(() => parseSheetJson(sheetJsonValue, rowCount));
     const [savingStatus, setSavingStatus]       = useState("idle");
     const [showColumnPanel, setShowColumnPanel] = useState(false);
@@ -54,6 +50,13 @@ export function WorkbookContainer(props) {
     const debounceTimer = useRef(null);
     const savedTimer    = useRef(null);
     const isFirstLoad   = useRef(true);
+
+    // ── HyperFormula instance ─────────────────────────────────────────────
+    // ONE instance per widget mount. Passed down to SheetGrid which
+    // hands it to HotTable via the formulas prop.
+    // SheetGrid is gated on hfReady — guarantees HotTable always mounts
+    // with a live HF engine attached.
+    const { hfRef, hfReady } = useHyperformula();
 
     useEffect(() => {
         const parsed = parseSheetJson(sheetJsonValue, rowCount);
@@ -227,17 +230,20 @@ export function WorkbookContainer(props) {
             )}
 
             <div className={CSS.GRID_WRAPPER}>
-                <SheetGrid
-                    key={sheetIdValue} sheet={sheet}
-                    isEditable={canEditCells} isAdmin={canEditColumns}
-                    height={gridHeight} rowHeaders={rowHeaders} colHeaders={colHeaders}
-                    hotRef={hotRef}
-                    onCellChange={(_, newData) => handleCellChange(newData)}
-                    onMetaChange={(_, newMeta) => handleMetaChange(newMeta)}
-                    onDimensionChange={(_, dims) => handleDimensionChange(dims)}
-                    onAuditLog={onAuditLog}
-                    auditJson={auditJson}
-                />
+                {hfReady && (
+                    <SheetGrid
+                        key={sheetIdValue} sheet={sheet}
+                        isEditable={canEditCells} isAdmin={canEditColumns}
+                        height={gridHeight} rowHeaders={rowHeaders} colHeaders={colHeaders}
+                        hotRef={hotRef}
+                        hfRef={hfRef}
+                        onCellChange={(_, newData) => handleCellChange(newData)}
+                        onMetaChange={(_, newMeta) => handleMetaChange(newMeta)}
+                        onDimensionChange={(_, dims) => handleDimensionChange(dims)}
+                        onAuditLog={onAuditLog}
+                        auditJson={auditJson}
+                    />
+                )}
             </div>
 
             {showColumnPanel && canEditColumns && (
@@ -267,7 +273,6 @@ export function WorkbookContainer(props) {
 }
 
 // ── SavingIndicator ───────────────────────────────────────────────────────────
-// No fragments — each branch returns a plain div wrapper
 
 function SavingIndicator({ status }) {
     if (status === "idle") return null;
