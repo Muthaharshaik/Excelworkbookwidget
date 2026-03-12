@@ -8,19 +8,18 @@
  * {
  *   "data":        [[row data]],
  *   "columns":     [{ key, header, type, width, source, format, readOnly }],
- *   "rowLabels":   ["Q1", "Q2", "", "Revenue", ...],
+ *   "rowLabels":   ["Q1", "Q2", "", "Revenue", ...],   ← custom row header strings
  *   "cellMeta":    { "r0_c0": { bold, italic, fontColor, bgColor, align } },
  *   "colWidths":   [120, 80, 150],
  *   "rowHeights":  [23, 23, ...],
  *   "mergedCells": [{ row, col, rowspan, colspan }]
  * }
  *
- * allSheetsJson shape stored in Workbook.allSheetsJson:
- * [
- *   { "sheetId": "1", "sheetName": "Revenue",  "data": [[1,2],[3,4]] },
- *   { "sheetId": "2", "sheetName": "Expenses", "data": [[5,6],[7,8]] }
- * ]
- * Only sheetId, sheetName, data are needed — HF doesn't need formatting.
+ * rowLabels rules:
+ *   - Array of strings, one per data row
+ *   - Empty string ""  → show default row number in grid
+ *   - Array can be shorter than data rows — missing entries treated as ""
+ *   - Array can be longer  than data rows — extra entries are ignored
  */
 
 import { MIN_COLS } from "../utils/constants";
@@ -69,69 +68,15 @@ export function parseSheetJson(jsonString, rowCount = 50) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  PARSE ALL SHEETS  (Workbook.allSheetsJson → array of sheet summaries)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * parseAllSheetsJson
- *
- * Parses the combined all-sheets JSON from Workbook.allSheetsJson.
- * Used by useHyperformula to register ALL sheets into the HF engine
- * so cross-sheet references like =Revenue!A1 resolve correctly.
- *
- * Only extracts sheetId, sheetName, data — HF doesn't need formatting.
- *
- * @param {string} jsonString  - value of Workbook.allSheetsJson attribute
- * @returns {Array<{ sheetId: string, sheetName: string, data: any[][] }>}
- *          Returns empty array if invalid — widget falls back to
- *          single-sheet mode gracefully.
- */
-export function parseAllSheetsJson(jsonString) {
-    // Not provided — single-sheet mode fallback
-    if (!jsonString || typeof jsonString !== "string" || jsonString.trim() === "") {
-        return [];
-    }
-
-    let raw;
-    try {
-        raw = JSON.parse(jsonString);
-    } catch (e) {
-        console.error("[ExcelWidget] Failed to parse allSheetsJson:", e.message);
-        return [];
-    }
-
-    // Must be an array
-    if (!Array.isArray(raw)) {
-        console.error("[ExcelWidget] allSheetsJson must be a JSON array.");
-        return [];
-    }
-
-    // Validate and normalise each sheet entry
-    return raw
-        .filter(entry => {
-            if (!entry || typeof entry !== "object") return false;
-            if (!entry.sheetName || typeof entry.sheetName !== "string") return false;
-            return true;
-        })
-        .map(entry => ({
-            sheetId:   String(entry.sheetId   ?? ""),
-            sheetName: String(entry.sheetName ?? ""),
-            // Normalise data — must be array of arrays
-            data: Array.isArray(entry.data)
-                ? entry.data.map(row => Array.isArray(row) ? row : [])
-                : [[]],
-        }));
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 //  SERIALIZE  (widget state → JSON string for Mendix setValue)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * serializeSheet
  * Converts widget state back to JSON string for Spreadsheet.sheetJson.
+ * Trims empty trailing rows/cols to keep JSON small.
  *
- * @param {object} sheetData
+ * @param {object} sheetData  - { data, columns, rowLabels, cellMeta, colWidths, rowHeights, mergedCells }
  * @returns {string}
  */
 export function serializeSheet(sheetData) {
@@ -192,10 +137,12 @@ function trimData(data) {
 
     let rows = data.map(row => [...(Array.isArray(row) ? row : [])]);
 
+    // Remove empty trailing rows
     while (rows.length > 1 && rows[rows.length - 1].every(isEmpty)) {
         rows.pop();
     }
 
+    // Find last used column
     let maxUsedCol = 0;
     rows.forEach(row => {
         for (let c = row.length - 1; c >= 0; c--) {
@@ -209,6 +156,11 @@ function trimData(data) {
     return rows.map(row => row.slice(0, maxUsedCol + 1));
 }
 
+/**
+ * trimRowLabels
+ * Strips trailing empty strings so we don't bloat the JSON
+ * when most rows have no custom label.
+ */
 function trimRowLabels(labels) {
     if (!Array.isArray(labels) || labels.length === 0) return [];
     const arr = [...labels];

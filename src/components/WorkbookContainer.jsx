@@ -12,7 +12,7 @@ import { ColumnSettingsPanel } from "./ColumnSettingsPanel";
 import { RowSettingsPanel }    from "./RowSettingsPanel";
 import { ReadOnlyBadge }       from "./ReadOnlyBadge";
 
-import { parseSheetJson, serializeSheet, parseAllSheetsJson } from "../services/dataService";
+import { parseSheetJson, serializeSheet } from "../services/dataService";
 import { triggerSheetChange }             from "../services/mendixBridge";
 import { CSS, AUTOSAVE_DEBOUNCE_MS }      from "../utils/constants";
 import { useHyperformula }                from "../hooks/useHyperformula";
@@ -22,20 +22,18 @@ export function WorkbookContainer(props) {
         sheetId, sheetName, sheetJson,
         currentUserId, accessUserId, permissionType, isAdmin,
         onSheetChange, onAuditLog, auditJson,
-        allSheetsJson,                              // ← NEW
         gridHeight = 600, rowCount = 50,
         showToolbar = true, showSheetName = true,
         rowHeaders = true, colHeaders = true,
     } = props;
 
-    const sheetIdValue        = resolveAttr(sheetId)        ?? "";
-    const sheetNameValue      = resolveAttr(sheetName)      ?? "Sheet";
-    const sheetJsonValue      = resolveAttr(sheetJson);
-    const isAdminValue        = resolveAttr(isAdmin)        ?? false;
-    const currentUserValue    = resolveAttr(currentUserId)  ?? "";
-    const accessUserValue     = resolveAttr(accessUserId)   ?? "";
-    const permissionValue     = resolveAttr(permissionType) ?? "View";
-    const allSheetsJsonValue  = resolveAttr(allSheetsJson)  ?? "";  // ← NEW
+    const sheetIdValue      = resolveAttr(sheetId)        ?? "";
+    const sheetNameValue    = resolveAttr(sheetName)      ?? "Sheet";
+    const sheetJsonValue    = resolveAttr(sheetJson);
+    const isAdminValue      = resolveAttr(isAdmin)        ?? false;
+    const currentUserValue  = resolveAttr(currentUserId)  ?? "";
+    const accessUserValue   = resolveAttr(accessUserId)   ?? "";
+    const permissionValue   = resolveAttr(permissionType) ?? "View";
 
     const isUserMatch  = currentUserValue && accessUserValue
         && currentUserValue.trim() === accessUserValue.trim();
@@ -53,23 +51,12 @@ export function WorkbookContainer(props) {
     const savedTimer    = useRef(null);
     const isFirstLoad   = useRef(true);
 
-    // ── Parse allSheetsJson → allSheets array ─────────────────────────────
-    // parseAllSheetsJson returns [] if not provided → single-sheet fallback
-    // We memoize this so it only re-parses when allSheetsJsonValue changes
-    const [allSheets, setAllSheets] = useState(() => parseAllSheetsJson(allSheetsJsonValue));
-
-    useEffect(() => {
-        setAllSheets(parseAllSheetsJson(allSheetsJsonValue));
-    }, [allSheetsJsonValue]);
-
     // ── HyperFormula instance ─────────────────────────────────────────────
-    // Passes allSheets so HF registers ALL sheets for cross-sheet formulas.
-    // Passes currentSheetData so HF stays in sync with live cell edits.
-    const { hfRef, hfReady } = useHyperformula(
-        allSheets,
-        sheetNameValue,
-        sheetData.data || []
-    );
+    // ONE instance per widget mount. Passed down to SheetGrid which
+    // hands it to HotTable via the formulas prop.
+    // SheetGrid is gated on hfReady — guarantees HotTable always mounts
+    // with a live HF engine attached.
+    const { hfRef, hfReady } = useHyperformula();
 
     useEffect(() => {
         const parsed = parseSheetJson(sheetJsonValue, rowCount);

@@ -20,6 +20,7 @@
 
         <!-- ═══════════════════════════════════════════
              1. SHEET DATA
+             Widget must be inside DataView of Spreadsheet entity.
         ════════════════════════════════════════════ -->
         <propertyGroup caption="Sheet Data">
 
@@ -51,31 +52,6 @@
                 </attributeTypes>
             </property>
 
-            <!-- ── NEW ── -->
-            <property key="allSheetsJson" type="attribute" required="false">
-                <caption>All Sheets JSON</caption>
-                <description>
-                    Map to Workbook.allSheetsJson (String, Unlimited length).
-                    Contains ALL sheets data for this workbook as a JSON array.
-                    Used by HyperFormula to resolve cross-sheet references
-                    like =Revenue!A1.
-
-                    Expected format:
-                    [
-                      { "sheetId": "1", "sheetName": "Revenue",  "data": [[1,2],[3,4]] },
-                      { "sheetId": "2", "sheetName": "Expenses", "data": [[5,6],[7,8]] }
-                    ]
-
-                    Built by Mendix microflow ACT_Workbook_BuildAllSheetsJson.
-                    Called on page load and after every sheet save.
-
-                    If not provided, widget falls back to single-sheet mode.
-                </description>
-                <attributeTypes>
-                    <attributeType name="String"/>
-                </attributeTypes>
-            </property>
-
         </propertyGroup>
 
         <!-- ═══════════════════════════════════════════
@@ -88,6 +64,7 @@
                 <description>
                     Expression returning the current logged-in user's ID.
                     Example: toString($currentUser)
+                    Used to verify the WorkBookAccess record belongs to this user.
                 </description>
                 <returnType type="String"/>
             </property>
@@ -97,6 +74,7 @@
                 <description>
                     Expression returning the user ID from the WorkBookAccess record.
                     Example: toString($currentObject/WorkBookAccess_Account)
+                    Widget compares this with Current User ID to verify ownership.
                 </description>
                 <returnType type="String"/>
             </property>
@@ -105,7 +83,9 @@
                 <caption>Permission Type</caption>
                 <description>
                     Expression returning the permission from WorkBookAccess.
+                    Example: toString($currentObject/PermissionType)
                     Expected values: "Edit" or "View"
+                    Only applied if Current User ID matches Access Record User ID.
                 </description>
                 <returnType type="String"/>
             </property>
@@ -114,6 +94,7 @@
                 <caption>Is Admin</caption>
                 <description>
                     Expression returning true if current user is an admin.
+                    Example: $currentUser/IsAdmin
                     Admins get full access — overrides permissionType completely.
                 </description>
                 <returnType type="Boolean"/>
@@ -122,7 +103,7 @@
         </propertyGroup>
 
         <!-- ═══════════════════════════════════════════
-             3. ACTIONS
+             2. ACTIONS
         ════════════════════════════════════════════ -->
         <propertyGroup caption="Actions">
 
@@ -130,19 +111,24 @@
                 <caption>On Sheet Change (Auto-Save)</caption>
                 <description>
                     Fired after every cell edit (debounced 800ms).
-                    Wire to a microflow that commits the Spreadsheet object
-                    AND rebuilds allSheetsJson on the Workbook.
+                    Widget writes new JSON to sheetJson attribute first,
+                    then calls this action. Wire to a microflow that
+                    commits the Spreadsheet object.
                 </description>
             </property>
 
             <property key="onAuditLog" type="action" required="false">
                 <caption>On Audit Log</caption>
-                <description>Action to be triggered for Audit logs.</description>
+                <description>
+                    Action to be triggered for Auditlogs.
+                </description>
             </property>
 
             <property key="auditJson" type="attribute" required="false">
                 <caption>Audit JSON</caption>
-                <description>Audit JSON</description>
+                <description>
+                   Audit JSON
+                </description>
                 <attributeTypes>
                     <attributeType name="String"/>
                 </attributeTypes>
@@ -151,7 +137,7 @@
         </propertyGroup>
 
         <!-- ═══════════════════════════════════════════
-             4. DISPLAY SETTINGS
+             3. DISPLAY SETTINGS
         ════════════════════════════════════════════ -->
         <propertyGroup caption="Display Settings">
 
@@ -162,7 +148,10 @@
 
             <property key="rowCount" type="integer" defaultValue="50">
                 <caption>Row Count</caption>
-                <description>Number of rows to show in the grid. Default is 50.</description>
+                <description>
+                    Number of rows to show in the grid.
+                    Admin configures this per sheet. Default is 50.
+                </description>
             </property>
 
             <property key="showToolbar" type="boolean" defaultValue="true">
