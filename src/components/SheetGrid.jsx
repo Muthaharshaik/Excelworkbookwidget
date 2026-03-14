@@ -96,8 +96,6 @@ export const SheetGrid = memo(function SheetGrid({
     const invalidCellsRef = useRef(new Map());
 
     // ── HyperFormula config ────────────────────────────────────────────────
-    // hfRef.current is guaranteed to be populated here because WorkbookContainer
-    // gates SheetGrid rendering on hfReady=true.
     const formulasConfig = hfRef?.current
         ? {
             engine:    hfRef.current,
@@ -220,6 +218,7 @@ export const SheetGrid = memo(function SheetGrid({
     // ── afterChange ────────────────────────────────────────────────────────
     const afterChange = useCallback((changes, source) => {
         if (source === "loadData" || !changes || !onCellChange) return;
+
         const hot = gridRef.current?.hotInstance;
         if (!hot) return;
 

@@ -22,7 +22,7 @@ export function WorkbookContainer(props) {
         sheetId, sheetName, sheetJson,
         currentUserId, accessUserId, permissionType, isAdmin,
         onSheetChange, onAuditLog, auditJson,
-        allSheetsJson,                              // ← NEW
+        allSheetsJson,
         gridHeight = 600, rowCount = 50,
         showToolbar = true, showSheetName = true,
         rowHeaders = true, colHeaders = true,
@@ -35,7 +35,7 @@ export function WorkbookContainer(props) {
     const currentUserValue    = resolveAttr(currentUserId)  ?? "";
     const accessUserValue     = resolveAttr(accessUserId)   ?? "";
     const permissionValue     = resolveAttr(permissionType) ?? "View";
-    const allSheetsJsonValue  = resolveAttr(allSheetsJson)  ?? "";  // ← NEW
+    const allSheetsJsonValue  = resolveAttr(allSheetsJson)  ?? "";
 
     const isUserMatch  = currentUserValue && accessUserValue
         && currentUserValue.trim() === accessUserValue.trim();
@@ -54,8 +54,6 @@ export function WorkbookContainer(props) {
     const isFirstLoad   = useRef(true);
 
     // ── Parse allSheetsJson → allSheets array ─────────────────────────────
-    // parseAllSheetsJson returns [] if not provided → single-sheet fallback
-    // We memoize this so it only re-parses when allSheetsJsonValue changes
     const [allSheets, setAllSheets] = useState(() => parseAllSheetsJson(allSheetsJsonValue));
 
     useEffect(() => {
@@ -63,14 +61,15 @@ export function WorkbookContainer(props) {
     }, [allSheetsJsonValue]);
 
     // ── HyperFormula instance ─────────────────────────────────────────────
-    // Passes allSheets so HF registers ALL sheets for cross-sheet formulas.
-    // Passes currentSheetData so HF stays in sync with live cell edits.
     const { hfRef, hfReady } = useHyperformula(
         allSheets,
         sheetNameValue,
-        sheetData.data || []
+        hotRef
     );
 
+    // ── Reset on sheet switch ─────────────────────────────────────────────
+    // Cancels any pending debounced save from the previous sheet
+    // so stale data never gets written to the new sheet.
     useEffect(() => {
         const parsed = parseSheetJson(sheetJsonValue, rowCount);
         setSheetData(parsed);
