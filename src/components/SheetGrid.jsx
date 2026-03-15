@@ -99,7 +99,7 @@ export const SheetGrid = memo(function SheetGrid({
     const formulasConfig = hfRef?.current
         ? {
             engine:    hfRef.current,
-            sheetName: sheet.sheetName || "Sheet",
+            evaluateNullToZero: true
           }
         : false;
 
@@ -229,7 +229,7 @@ export const SheetGrid = memo(function SheetGrid({
 
         let dataToSave;
         if (invalids.size > 0) {
-            dataToSave = hot.getData().map(row => [...row]);
+            dataToSave = hot.getSourceData().map(row => [...row]);
             changes.forEach(([r, c, oldValue]) => {
                 if (invalids.has(`${r}_${c}`)) {
                     dataToSave[r][c] = oldValue ?? null;
@@ -243,7 +243,7 @@ export const SheetGrid = memo(function SheetGrid({
                 }
             });
         } else {
-            dataToSave = hot.getData();
+            dataToSave = hot.getSourceData();
         }
 
         onCellChange(sheet.sheetId, dataToSave);
