@@ -20,6 +20,26 @@
  * Passed to HotTable via the formulas prop. SheetGrid is only rendered after
  * hfReady=true (gated in WorkbookContainer) so HotTable always mounts with
  * a live HF engine — formulas activate correctly on first render.
+ *
+ * STRUCTURED REFERENCES:
+ * Users can reference cells using custom column/row header names instead
+ * of default A1 notation. Separator is underscore (_).
+ *
+ * Examples (columns: Revenue/Cost/Profit, rows: Q1/Q2/Q3/Q4):
+ *   =SUM(Revenue_Q1, Revenue_Q2)       works
+ *   =AVERAGE(Revenue_Q1:Revenue_Q4)    works
+ *   =Cost_Q3 - Revenue_Q3             works
+ *   =IF(Revenue_Q1>1000,"Good","Bad") works
+ *   =Revenue_1 + Cost_2               works (row number fallback)
+ *   =A_Q1 + B_Q2                      works (column letter + row header)
+ *   =A1 + B2                          works (standard A1 always works)
+ *
+ * EDIT MODE FIX:
+ * originalFormulasRef stores the original formula with header names.
+ * Populated on mount by scanning sheet.data (handles page refresh).
+ * Also populated in beforeChange when user types new formulas.
+ * afterBeginEditing restores original in editor on double click.
+ * afterChange restores originals before saving to Mendix.
  */
 
 import { createElement, useRef, useCallback, useEffect, memo, useMemo } from "react";
@@ -35,7 +55,8 @@ import {
     DEFAULT_DATE_FORMAT,
     DEFAULT_NUMERIC_FORMAT,
 } from "../utils/constants";
-import { cellKey, deepClone } from "../utils/helpers";
+import { cellKey, deepClone }                  from "../utils/helpers";
+import { buildHeaderRefMap, maybeTranslate }   from "../utils/formulaTranslator";
 
 // ── Row header width helper ────────────────────────────────────────────────────
 
@@ -95,11 +116,56 @@ export const SheetGrid = memo(function SheetGrid({
 
     const invalidCellsRef = useRef(new Map());
 
+    // ── Store original formulas (with header names) ────────────────────────
+    // Key: "row_col", Value: original formula e.g. "=SUM(Cost_Q1, Cost_Q3)"
+    //
+    // Populated in TWO ways:
+    // 1. On mount — scans sheet.data for existing header formulas (page refresh)
+    // 2. In beforeChange — when user types new header formulas
+    //
+    // Used by:
+    // - afterBeginEditing → show original formula in editor on double click
+    // - afterChange       → save original formula to Mendix (not A1 version)
+    const originalFormulasRef = useRef(new Map());
+
+    // ── Build header reference map ─────────────────────────────────────────
+    const headerRefMap = useMemo(
+        () => buildHeaderRefMap(sheet.columns, sheet.rowLabels),
+        [sheet.columns, sheet.rowLabels]
+    );
+
+    // ── Scan sheet.data on mount/sheet-switch to populate originalFormulasRef
+    // This handles page refresh — sheet.data is loaded from Mendix with
+    // header-based formulas (e.g. =AVERAGE(Cost_Q1:Cost_Q3)).
+    // We scan and register them so afterBeginEditing and afterChange work.
+    // beforeChange has loadData guard so we MUST populate here for refresh.
+    useEffect(() => {
+        originalFormulasRef.current.clear();
+        if (headerRefMap.size === 0) return;
+
+        const data = sheet.data || [];
+        data.forEach((row, rowIndex) => {
+            if (!Array.isArray(row)) return;
+            row.forEach((cellValue, colIndex) => {
+                if (typeof cellValue === "string" && cellValue.startsWith("=")) {
+                    const translated = maybeTranslate(cellValue, headerRefMap);
+                    if (translated !== cellValue) {
+                        // This cell has a header-based formula → store original
+                        originalFormulasRef.current.set(
+                            `${rowIndex}_${colIndex}`,
+                            cellValue
+                        );
+                    }
+                }
+            });
+        });
+    }, [sheet.sheetId, sheet.data, headerRefMap]);
+
     // ── HyperFormula config ────────────────────────────────────────────────
     const formulasConfig = hfRef?.current
         ? {
-            engine:    hfRef.current,
-            evaluateNullToZero: true
+            engine:             hfRef.current,
+            evaluateNullToZero: true,
           }
         : false;
 
@@ -198,11 +264,29 @@ export const SheetGrid = memo(function SheetGrid({
         [rowLabels, hasRowLabels]
     );
 
-    const gridData = useMemo(() => {
-        const fullData = deepClone(sheet.data);
-        if (!hasRowLabels) return fullData;
-        return fullData.slice(0, rowLabels.length);
-    }, [sheet.data, rowLabels.length, hasRowLabels]);
+const gridData = useMemo(() => {
+    const fullData = deepClone(sheet.data);
+    const data = hasRowLabels ? fullData.slice(0, rowLabels.length) : fullData;
+
+    // Translate header-based formulas to A1 notation for HF
+    // sheet.data stores =AVERAGE(Cost_Q1:Cost_Q3) → translate to =AVERAGE(B1:B3)
+    // so HF can evaluate correctly on load
+    if (headerRefMap.size > 0) {
+        data.forEach((row, rowIndex) => {
+            if (!Array.isArray(row)) return;
+            row.forEach((cellValue, colIndex) => {
+                if (typeof cellValue === "string" && cellValue.startsWith("=")) {
+                    const translated = maybeTranslate(cellValue, headerRefMap);
+                    if (translated !== cellValue) {
+                        data[rowIndex][colIndex] = translated;
+                    }
+                }
+            });
+        });
+    }
+
+    return data;
+}, [sheet.data, rowLabels.length, hasRowLabels, headerRefMap]);
 
     const hotRowHeaders = useMemo(() => {
         if (!hasRowLabels) return rowHeaders;
@@ -215,7 +299,51 @@ export const SheetGrid = memo(function SheetGrid({
         return { renderer: rendererName };
     }, [rendererName, sheet.columns]);
 
+    // ── beforeChange: translate header refs → A1 before HF evaluates ──────
+    // loadData guard is KEPT — translation on loadData would cause #ERROR.
+    // Instead, originalFormulasRef is populated via useEffect above for refresh.
+    // This hook only handles NEW formulas typed by the user.
+    const beforeChange = useCallback((changes, source) => {
+        if (source === "loadData" || !changes || headerRefMap.size === 0) return;
+
+        changes.forEach((change, index) => {
+            if (!change) return;
+            const [row, col, , newValue] = change;
+            if (typeof newValue === "string" && newValue.startsWith("=")) {
+                const translated = maybeTranslate(newValue, headerRefMap);
+                if (translated !== newValue) {
+                    // Store original BEFORE replacing with A1 notation
+                    originalFormulasRef.current.set(`${row}_${col}`, newValue);
+                    changes[index][3] = translated;
+                }
+            }
+        });
+    }, [headerRefMap]);
+
+    // ── afterBeginEditing: restore original formula in editor ──────────────
+    // HotTable opens editor with HF-stored A1 formula (=AVERAGE(B1:B3)).
+    // We replace it with the original header formula (=AVERAGE(Cost_Q1:Cost_Q3)).
+    const afterBeginEditing = useCallback((row, col) => {
+        const key      = `${row}_${col}`;
+        const original = originalFormulasRef.current.get(key);
+        if (!original) return;
+
+        try {
+            const hot    = gridRef.current?.hotInstance;
+            if (!hot) return;
+            const editor = hot.getActiveEditor();
+            if (editor && editor.isOpened()) {
+                editor.setValue(original);
+            }
+        } catch (e) {
+            // safe to ignore
+        }
+    }, [gridRef]);
+
     // ── afterChange ────────────────────────────────────────────────────────
+    // Restores original header formulas before saving to Mendix.
+    // getSourceData() returns A1 translated formulas — we replace them
+    // with originals so Mendix stores =AVERAGE(Cost_Q1:Cost_Q3) not =AVERAGE(B1:B3).
     const afterChange = useCallback((changes, source) => {
         if (source === "loadData" || !changes || !onCellChange) return;
 
@@ -244,6 +372,17 @@ export const SheetGrid = memo(function SheetGrid({
             });
         } else {
             dataToSave = hot.getSourceData();
+        }
+
+        // Restore original header formulas before saving
+        // Replaces A1 notation back to header names for Mendix storage
+        if (originalFormulasRef.current.size > 0) {
+            originalFormulasRef.current.forEach((originalFormula, key) => {
+                const [r, c] = key.split("_").map(Number);
+                if (dataToSave[r] !== undefined && dataToSave[r][c] !== undefined) {
+                    dataToSave[r][c] = originalFormula;
+                }
+            });
         }
 
         onCellChange(sheet.sheetId, dataToSave);
@@ -385,6 +524,8 @@ export const SheetGrid = memo(function SheetGrid({
                 stretchH="last"
                 mergeCells={sheet.mergedCells?.length ? sheet.mergedCells : true}
                 cells={hotColumns ? undefined : cells}
+                beforeChange={beforeChange}
+                afterBeginEditing={afterBeginEditing}
                 afterChange={afterChange}
                 afterColumnResize={afterColumnResize}
                 afterRowResize={afterRowResize}
