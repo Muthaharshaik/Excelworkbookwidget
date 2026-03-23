@@ -1,77 +1,139 @@
-/**
- * useHyperformula.js — FINAL
- *
- * Manages HF engine and other-sheet data for cross-sheet formula resolution.
- * No sheet removal needed — the bleed fix is entirely in SheetGrid's data prop.
- */
-
 import { useRef, useState, useEffect } from "react";
 import { HyperFormula } from "hyperformula";
 
 export function useHyperformula(allSheets, currentSheetName, hotRef) {
 
-    const hfRef                 = useRef(null);
-    const [hfReady, setHfReady] = useState(false);
-    const registeredSheetsRef   = useRef(new Set());
-    const currentSheetNameRef   = useRef(currentSheetName);
-    currentSheetNameRef.current = currentSheetName;
+    const hfRef                               = useRef(null);
+    const [hfReady, setHfReady]               = useState(false);
+    const [allSheetsReady, setAllSheetsReady] = useState(false);
 
+    // Track sheets currently registered inside HF
+    const registeredSheetsRef = useRef(new Set());
+
+    // ─────────────────────────────────────────────────────────────
+    // Create HF engine once
+    // ─────────────────────────────────────────────────────────────
     useEffect(() => {
         try {
-            const hf = HyperFormula.buildEmpty({ licenseKey: "gpl-v3" });
+            const hf = HyperFormula.buildEmpty({
+                licenseKey: "gpl-v3"
+            });
+
             hfRef.current = hf;
             setHfReady(true);
+
         } catch (e) {
-            console.info("[HF] Engine creation failed:", e.message);
+            console.error("[ExcelWidget] HyperFormula failed to initialise:", e.message);
         }
+
         return () => {
-            try { hfRef.current?.destroy(); } catch {}
+            try {
+                hfRef.current?.destroy();
+            } catch {}
+
             hfRef.current = null;
             registeredSheetsRef.current.clear();
-            setHfReady(false);
+            setAllSheetsReady(false);
         };
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    }, []);
 
+    // ─────────────────────────────────────────────────────────────
+    // Sync OTHER sheets into HyperFormula
+    // (current sheet is always owned by Handsontable)
+    // ─────────────────────────────────────────────────────────────
     useEffect(() => {
+
         const hf = hfRef.current;
         if (!hf || !hfReady) return;
-        if (!Array.isArray(allSheets) || allSheets.length === 0) return;
 
-        const current    = currentSheetNameRef.current;
+        if (!Array.isArray(allSheets) || allSheets.length === 0) {
+            setAllSheetsReady(true);
+            return;
+        }
+
         const registered = registeredSheetsRef.current;
-        const others     = allSheets.filter(s => s.sheetName !== current);
 
-        others.forEach(sheet => {
+        // Only sync sheets that are NOT currently displayed
+        const otherSheets = allSheets.filter(
+            s => s.sheetName !== currentSheetName
+        );
+
+        let recalculationNeeded = false;
+
+        // ── Ensure all other sheets exist and update their data
+        otherSheets.forEach(sheet => {
+
             try {
-                const safeData = (Array.isArray(sheet.data) && sheet.data.length > 0) ? sheet.data : [[]];
-                if (hf.doesSheetExist(sheet.sheetName)) {
-                    hf.setSheetContent(hf.getSheetId(sheet.sheetName), safeData);
-                } else {
-                    hf.addSheet(sheet.sheetName);
-                    hf.setSheetContent(hf.getSheetId(sheet.sheetName), safeData);
+
+                const sheetName = sheet.sheetName;
+                const existingId = hf.getSheetId(sheetName);
+
+                // Sheet not yet registered → create
+                if (existingId === undefined) {
+
+                    const newId = hf.addSheet(sheetName);
+                    hf.setSheetContent(newId, sheet.data || [[]]);
+
+                    registered.add(sheetName);
+                    recalculationNeeded = true;
+                    return;
                 }
-                registered.add(sheet.sheetName);
+
+                // Sheet exists → update content
+                hf.setSheetContent(existingId, sheet.data || [[]]);
+                registered.add(sheetName);
+                recalculationNeeded = true;
+
             } catch (err) {
-                console.info(`[HF] sync error "${sheet.sheetName}":`, err.message);
+                console.warn("[ExcelWidget] HF sync warning:", err.message);
             }
+
         });
 
+        // ── Remove sheets that no longer exist in Mendix
         registered.forEach(sheetName => {
-            if (sheetName === current) return;
-            if (!others.some(s => s.sheetName === sheetName)) {
+
+            const stillExists = otherSheets.some(
+                s => s.sheetName === sheetName
+            );
+
+            if (!stillExists) {
+
                 try {
-                    if (hf.doesSheetExist(sheetName)) hf.removeSheet(hf.getSheetId(sheetName));
+                    const id = hf.getSheetId(sheetName);
+
+                    if (id !== undefined) {
+                        hf.removeSheet(id);
+                    }
+
                 } catch {}
+
                 registered.delete(sheetName);
+                recalculationNeeded = true;
             }
+
         });
 
-        try {
-            const hot = hotRef?.current?.hotInstance;
-            if (hot) hot.render();
-        } catch {}
+        setAllSheetsReady(true);
 
-    }, [allSheets, hfReady, hotRef]);
+        // Trigger Handsontable re-render if HF graph changed
+        if (recalculationNeeded) {
 
-    return { hfRef, hfReady };
+            try {
+                const hot = hotRef?.current?.hotInstance;
+
+                if (hot) {
+                    hot.render();
+                }
+
+            } catch {}
+
+        }
+
+    }, [allSheets, currentSheetName, hfReady]);
+
+    return {
+        hfRef,
+        hfReady: hfReady && allSheetsReady
+    };
 }
