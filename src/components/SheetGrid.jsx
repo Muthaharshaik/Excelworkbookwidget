@@ -40,6 +40,11 @@
  * Also populated in beforeChange when user types new formulas.
  * afterBeginEditing restores original in editor on double click.
  * afterChange restores originals before saving to Mendix.
+ *
+ * LOCKED CELLS:
+ * Formula destination cells are stored in sheet.lockedCells as [[row, col], ...].
+ * Written by the Java action AddValueUsingRowColumnName on Mendix side.
+ * Non-admin users cannot edit these cells. Admins can always edit.
  */
 
 import { createElement, useRef, useCallback, useEffect, memo, useMemo } from "react";
@@ -117,15 +122,6 @@ export const SheetGrid = memo(function SheetGrid({
     const invalidCellsRef = useRef(new Map());
 
     // ── Store original formulas (with header names) ────────────────────────
-    // Key: "row_col", Value: original formula e.g. "=SUM(Cost_Q1, Cost_Q3)"
-    //
-    // Populated in TWO ways:
-    // 1. On mount — scans sheet.data for existing header formulas (page refresh)
-    // 2. In beforeChange — when user types new header formulas
-    //
-    // Used by:
-    // - afterBeginEditing → show original formula in editor on double click
-    // - afterChange       → save original formula to Mendix (not A1 version)
     const originalFormulasRef = useRef(new Map());
 
     // ── Build header reference map ─────────────────────────────────────────
@@ -135,10 +131,6 @@ export const SheetGrid = memo(function SheetGrid({
     );
 
     // ── Scan sheet.data on mount/sheet-switch to populate originalFormulasRef
-    // This handles page refresh — sheet.data is loaded from Mendix with
-    // header-based formulas (e.g. =AVERAGE(Cost_Q1:Cost_Q3)).
-    // We scan and register them so afterBeginEditing and afterChange work.
-    // beforeChange has loadData guard so we MUST populate here for refresh.
     useEffect(() => {
         originalFormulasRef.current.clear();
         if (headerRefMap.size === 0) return;
@@ -150,7 +142,6 @@ export const SheetGrid = memo(function SheetGrid({
                 if (typeof cellValue === "string" && cellValue.startsWith("=")) {
                     const translated = maybeTranslate(cellValue, headerRefMap);
                     if (translated !== cellValue) {
-                        // This cell has a header-based formula → store original
                         originalFormulasRef.current.set(
                             `${rowIndex}_${colIndex}`,
                             cellValue
@@ -264,29 +255,26 @@ export const SheetGrid = memo(function SheetGrid({
         [rowLabels, hasRowLabels]
     );
 
-const gridData = useMemo(() => {
-    const fullData = deepClone(sheet.data);
-    const data = hasRowLabels ? fullData.slice(0, rowLabels.length) : fullData;
+    const gridData = useMemo(() => {
+        const fullData = deepClone(sheet.data);
+        const data = hasRowLabels ? fullData.slice(0, rowLabels.length) : fullData;
 
-    // Translate header-based formulas to A1 notation for HF
-    // sheet.data stores =AVERAGE(Cost_Q1:Cost_Q3) → translate to =AVERAGE(B1:B3)
-    // so HF can evaluate correctly on load
-    if (headerRefMap.size > 0) {
-        data.forEach((row, rowIndex) => {
-            if (!Array.isArray(row)) return;
-            row.forEach((cellValue, colIndex) => {
-                if (typeof cellValue === "string" && cellValue.startsWith("=")) {
-                    const translated = maybeTranslate(cellValue, headerRefMap);
-                    if (translated !== cellValue) {
-                        data[rowIndex][colIndex] = translated;
+        if (headerRefMap.size > 0) {
+            data.forEach((row, rowIndex) => {
+                if (!Array.isArray(row)) return;
+                row.forEach((cellValue, colIndex) => {
+                    if (typeof cellValue === "string" && cellValue.startsWith("=")) {
+                        const translated = maybeTranslate(cellValue, headerRefMap);
+                        if (translated !== cellValue) {
+                            data[rowIndex][colIndex] = translated;
+                        }
                     }
-                }
+                });
             });
-        });
-    }
+        }
 
-    return data;
-}, [sheet.data, rowLabels.length, hasRowLabels, headerRefMap]);
+        return data;
+    }, [sheet.data, rowLabels.length, hasRowLabels, headerRefMap]);
 
     const hotRowHeaders = useMemo(() => {
         if (!hasRowLabels) return rowHeaders;
@@ -294,15 +282,25 @@ const gridData = useMemo(() => {
     }, [rowLabels, hasRowLabels, rowHeaders]);
 
     // ── cells callback ─────────────────────────────────────────────────────
-    const cells = useCallback(() => {
-        if (sheet.columns?.length) return {};
-        return { renderer: rendererName };
-    }, [rendererName, sheet.columns]);
+    // ── NEW: checks lockedCells — formula destination cells are read-only
+    //         for non-admins. Admins can always edit.
+    const cells = useCallback((row, col) => {
+        const lockedCells = sheet.lockedCells || [];
+        const isLocked = lockedCells.some(entry => {
+            if (Array.isArray(entry)) return entry[0] === row && entry[1] === col;
+            return entry.row === row && entry.col === col;
+        });
 
-    // ── beforeChange: translate header refs → A1 before HF evaluates ──────
-    // loadData guard is KEPT — translation on loadData would cause #ERROR.
-    // Instead, originalFormulasRef is populated via useEffect above for refresh.
-    // This hook only handles NEW formulas typed by the user.
+        if (isLocked) {
+            return { readOnly: true, renderer: rendererName };
+        }
+
+        if (sheet.columns?.length) return {};
+
+        return { renderer: rendererName };
+    }, [rendererName, sheet.columns, sheet.lockedCells, isAdmin]);
+
+    // ── beforeChange ──────────────────────────────────────────────────────
     const beforeChange = useCallback((changes, source) => {
         if (source === "loadData" || !changes || headerRefMap.size === 0) return;
 
@@ -312,7 +310,6 @@ const gridData = useMemo(() => {
             if (typeof newValue === "string" && newValue.startsWith("=")) {
                 const translated = maybeTranslate(newValue, headerRefMap);
                 if (translated !== newValue) {
-                    // Store original BEFORE replacing with A1 notation
                     originalFormulasRef.current.set(`${row}_${col}`, newValue);
                     changes[index][3] = translated;
                 }
@@ -320,9 +317,7 @@ const gridData = useMemo(() => {
         });
     }, [headerRefMap]);
 
-    // ── afterBeginEditing: restore original formula in editor ──────────────
-    // HotTable opens editor with HF-stored A1 formula (=AVERAGE(B1:B3)).
-    // We replace it with the original header formula (=AVERAGE(Cost_Q1:Cost_Q3)).
+    // ── afterBeginEditing ─────────────────────────────────────────────────
     const afterBeginEditing = useCallback((row, col) => {
         const key      = `${row}_${col}`;
         const original = originalFormulasRef.current.get(key);
@@ -341,9 +336,6 @@ const gridData = useMemo(() => {
     }, [gridRef]);
 
     // ── afterChange ────────────────────────────────────────────────────────
-    // Restores original header formulas before saving to Mendix.
-    // getSourceData() returns A1 translated formulas — we replace them
-    // with originals so Mendix stores =AVERAGE(Cost_Q1:Cost_Q3) not =AVERAGE(B1:B3).
     const afterChange = useCallback((changes, source) => {
         if (source === "loadData" || !changes || !onCellChange) return;
 
@@ -374,8 +366,6 @@ const gridData = useMemo(() => {
             dataToSave = hot.getSourceData();
         }
 
-        // Restore original header formulas before saving
-        // Replaces A1 notation back to header names for Mendix storage
         if (originalFormulasRef.current.size > 0) {
             originalFormulasRef.current.forEach((originalFormula, key) => {
                 const [r, c] = key.split("_").map(Number);
@@ -523,7 +513,7 @@ const gridData = useMemo(() => {
                 undo={isEditable}
                 stretchH="last"
                 mergeCells={sheet.mergedCells?.length ? sheet.mergedCells : true}
-                cells={hotColumns ? undefined : cells}
+                cells={cells}
                 beforeChange={beforeChange}
                 afterBeginEditing={afterBeginEditing}
                 afterChange={afterChange}

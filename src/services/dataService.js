@@ -52,6 +52,8 @@ export function parseSheetJson(jsonString, rowCount = 50) {
         colWidths:   Array.isArray(raw.colWidths)   ? raw.colWidths                           : [],
         rowHeights:  Array.isArray(raw.rowHeights)  ? raw.rowHeights                          : [],
         mergedCells: Array.isArray(raw.mergedCells) ? raw.mergedCells                         : [],
+        // ── NEW: locked cells from formula destination ──
+        lockedCells: Array.isArray(raw.lockedCells) ? raw.lockedCells                         : [],
         // metadata is read-only — widget doesn't use it for rendering
     };
 }
@@ -138,6 +140,8 @@ export function serializeSheet(sheetData) {
             colWidths:   sheetData.colWidths   || [],
             rowHeights:  sheetData.rowHeights  || [],
             mergedCells: sheetData.mergedCells || [],
+            // ── NEW: preserve lockedCells so they survive widget save cycles ──
+            lockedCells: sheetData.lockedCells || [],
             metadata: {
                 columnHeaders,
                 rowLabels: rowLabelsMeta,
@@ -175,6 +179,7 @@ function buildEmptySheetData(rowCount) {
         colWidths:   [],
         rowHeights:  [],
         mergedCells: [],
+        lockedCells: [],
     };
 }
 

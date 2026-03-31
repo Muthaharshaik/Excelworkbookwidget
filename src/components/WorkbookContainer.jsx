@@ -172,11 +172,18 @@ export function WorkbookContainer(props) {
     }, []);
 
     const sheet = {
-        sheetId: sheetIdValue, sheetName: sheetNameValue, isEditable: canEditCells,
-        data: sheetData.data || [], columns: sheetData.columns || [],
-        rowLabels: sheetData.rowLabels || [], cellMeta: sheetData.cellMeta || {},
-        colWidths: sheetData.colWidths || [], rowHeights: sheetData.rowHeights || [],
+        sheetId:     sheetIdValue,
+        sheetName:   sheetNameValue,
+        isEditable:  canEditCells,
+        data:        sheetData.data        || [],
+        columns:     sheetData.columns     || [],
+        rowLabels:   sheetData.rowLabels   || [],
+        cellMeta:    sheetData.cellMeta    || {},
+        colWidths:   sheetData.colWidths   || [],
+        rowHeights:  sheetData.rowHeights  || [],
         mergedCells: sheetData.mergedCells || [],
+        // ── NEW: pass lockedCells through to SheetGrid ──
+        lockedCells: sheetData.lockedCells || [],
     };
 
     const hasCustomColumns = sheet.columns.length > 0;

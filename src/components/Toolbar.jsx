@@ -133,6 +133,29 @@ export function Toolbar({ hotRef, activeSheet, onMetaChange, disabled }) {
         hot.render();
     }, [hotRef, activeSheet, onMetaChange, disabled]);
 
+    // ── Export CSV ────────────────────────────────────────────────────────
+    const exportCSV = useCallback(() => {
+        const hot = hotRef?.current?.hotInstance;
+        if (!hot) return;
+        try {
+            const exportPlugin = hot.getPlugin("exportFile");
+            exportPlugin.downloadFile("csv", {
+                bom:                  false,
+                columnDelimiter:      ",",
+                columnHeaders:        activeSheet?.columns?.length > 0,
+                exportHiddenColumns:  false,
+                exportHiddenRows:     false,
+                fileExtension:        "csv",
+                filename:             (activeSheet?.sheetName || "export") + "_" + new Date().toISOString().slice(0, 10),
+                mimeType:             "text/csv",
+                rowDelimiter:         "\r\n",
+                rowHeaders:           activeSheet?.rowLabels?.length > 0,
+            });
+        } catch (err) {
+            console.error("[ExcelWidget] CSV export failed:", err.message);
+        }
+    }, [hotRef, activeSheet?.sheetName]);
+
     return (
         <div className={CSS.TOOLBAR} role="toolbar" aria-label="Formatting toolbar">
 
@@ -184,22 +207,19 @@ export function Toolbar({ hotRef, activeSheet, onMetaChange, disabled }) {
 
             <Divider />
 
-            {/* ── Merge group ───────────────────────────────────────── */}
-            {/* <ToolbarGroup>
-                <ToolbarBtn title="Merge selected cells"   disabled={disabled} onClick={mergeCells}>
-                    <IconMerge />
-                </ToolbarBtn>
-                <ToolbarBtn title="Unmerge selected cells" disabled={disabled} onClick={unmergeCells}>
-                    <IconUnmerge />
-                </ToolbarBtn>
-            </ToolbarGroup>
-
-            <Divider /> */}
-
             {/* ── Clear formatting ──────────────────────────────────── */}
             <ToolbarGroup>
                 <ToolbarBtn title="Clear formatting from selected cells" disabled={disabled} onClick={clearFormatting}>
                     <IconClearFormat />
+                </ToolbarBtn>
+            </ToolbarGroup>
+
+            <Divider />
+
+            {/* ── Export CSV ────────────────────────────────────────── */}
+            <ToolbarGroup>
+                <ToolbarBtn title="Export as CSV" disabled={false} onClick={exportCSV}>
+                    <IconExportCSV />
                 </ToolbarBtn>
             </ToolbarGroup>
 
@@ -366,6 +386,15 @@ function IconClearFormat() {
             <path d="M3 3.5h8M5.5 3.5V12M7 7.5H10.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
             <line x1="9" y1="9" x2="12.5" y2="12.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
             <line x1="12.5" y1="9" x2="9" y2="12.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+        </svg>
+    );
+}
+
+function IconExportCSV() {
+    return (
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <path d="M7 1v8M4 6l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M2 10v1.5A1.5 1.5 0 0 0 3.5 13h7a1.5 1.5 0 0 0 1.5-1.5V10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
         </svg>
     );
 }
