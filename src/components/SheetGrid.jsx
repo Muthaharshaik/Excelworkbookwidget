@@ -45,6 +45,13 @@
  * Formula destination cells are stored in sheet.lockedCells as [[row, col], ...].
  * Written by the Java action AddValueUsingRowColumnName on Mendix side.
  * Non-admin users cannot edit these cells. Admins can always edit.
+ * Locked cells are visually styled: grey background + purple border.
+ *
+ * LOCKED CELLS CROSS-SHEET FIX:
+ * lockedCells is stored in a ref (lockedCellsRef) that is updated on every
+ * render, exactly like cellMetaRef. The custom renderer and the cells()
+ * callback both read from the ref — never from the closure — so switching
+ * sheets always shows the correct locked positions for the active sheet.
  */
 
 import { createElement, useRef, useCallback, useEffect, memo, useMemo } from "react";
@@ -119,6 +126,16 @@ export const SheetGrid = memo(function SheetGrid({
     const cellMetaRef   = useRef(sheet.cellMeta);
     cellMetaRef.current = sheet.cellMeta;
 
+    // ── lockedCellsRef — always current, never stale in closures ──────────
+    // The renderer is registered once via useMemo and its closure never
+    // updates. Reading sheet.lockedCells directly inside the renderer would
+    // always see the value from the FIRST render (the first sheet).
+    // Storing it in a ref — updated every render — gives the renderer and
+    // the cells() callback live access to the active sheet's locked cells,
+    // exactly the same pattern used for cellMetaRef above.
+    const lockedCellsRef   = useRef(sheet.lockedCells || []);
+    lockedCellsRef.current = sheet.lockedCells || [];
+
     const invalidCellsRef = useRef(new Map());
 
     // ── Store original formulas (with header names) ────────────────────────
@@ -160,12 +177,34 @@ export const SheetGrid = memo(function SheetGrid({
           }
         : false;
 
+    // ── Shared locked-cell check helper ───────────────────────────────────
+    // Reads from the ref so both the renderer and cells() are always in sync
+    // with the currently active sheet, regardless of closure capture order.
+    function isLockedCell(row, col) {
+        return lockedCellsRef.current.some(entry => {
+            if (Array.isArray(entry)) return entry[0] === row && entry[1] === col;
+            return entry.row === row && entry.col === col;
+        });
+    }
+
     // ── Register custom renderer ───────────────────────────────────────────
+    // Reads lockedCellsRef.current (live ref) — never the captured closure
+    // value — so cross-sheet navigation always applies the correct styling.
     useMemo(() => {
         Handsontable.renderers.registerRenderer(
             rendererName,
             function (hotInstance, TD, row, col, prop, value, cellProperties) {
                 Handsontable.renderers.TextRenderer.apply(this, arguments);
+
+                if (isLockedCell(row, col)) {
+                    TD.style.backgroundColor = "#d9d9d9";
+                    TD.style.color           = "#5b21b6";
+                    TD.style.borderBottom    = "1px solid #d9d9d9";
+                    TD.style.borderRight     = "1px solid #d9d9d9";
+                    return;
+                }
+
+                // Regular user formatting
                 const meta = cellMetaRef.current?.[cellKey(row, col)];
                 if (!meta) return;
                 if (meta.bold)      TD.style.fontWeight      = "bold";
@@ -282,16 +321,10 @@ export const SheetGrid = memo(function SheetGrid({
     }, [rowLabels, hasRowLabels, rowHeaders]);
 
     // ── cells callback ─────────────────────────────────────────────────────
-    // ── NEW: checks lockedCells — formula destination cells are read-only
-    //         for non-admins. Admins can always edit.
+    // Also reads via isLockedCell() → lockedCellsRef.current so it stays
+    // in sync with the active sheet on every render.
     const cells = useCallback((row, col) => {
-        const lockedCells = sheet.lockedCells || [];
-        const isLocked = lockedCells.some(entry => {
-            if (Array.isArray(entry)) return entry[0] === row && entry[1] === col;
-            return entry.row === row && entry.col === col;
-        });
-
-        if (isLocked) {
+        if (isLockedCell(row, col)) {
             return { readOnly: true, renderer: rendererName };
         }
 

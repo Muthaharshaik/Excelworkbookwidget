@@ -2,6 +2,21 @@
  * WorkbookContainer.jsx
  * Single sheet per widget instance.
  * No JSX fragments anywhere — Mendix compatibility.
+ *
+ * FIX: sheetData now re-parses whenever sheetJsonValue changes from Mendix
+ * (e.g. after a Java action writes a formula result back into sheetJson).
+ *
+ * Two refs work together to prevent an infinite save loop:
+ *
+ *   isPendingEdit   — true while the user has an unsaved edit in the debounce
+ *                     window. Blocks Mendix-pushed sheetJsonValue from
+ *                     overwriting in-flight user changes.
+ *
+ *   isMendixUpdate  — set to true just before we call setSheetData from the
+ *                     Mendix-push effect. The auto-save effect checks this flag
+ *                     and skips saving (and immediately resets the flag to false)
+ *                     so that a Mendix-originated data update never triggers
+ *                     an unnecessary write back to Mendix.
  */
 
 import { createElement, useRef, useCallback, useState, useEffect } from "react";
@@ -53,6 +68,19 @@ export function WorkbookContainer(props) {
     const savedTimer    = useRef(null);
     const isFirstLoad   = useRef(true);
 
+    // ── isPendingEdit: true while user has an unsaved edit in the debounce window.
+    // Set when the auto-save effect fires. Cleared when performSave succeeds.
+    // While true, Mendix-pushed sheetJsonValue updates are ignored so an
+    // in-flight user edit is never overwritten by a concurrent Mendix refresh.
+    const isPendingEdit = useRef(false);
+
+    // ── isMendixUpdate: set to true immediately before calling setSheetData
+    // from the Mendix-push effect. The auto-save effect reads this flag and
+    // skips saving (then immediately resets the flag to false) so that data
+    // arriving FROM Mendix never bounces straight back as a save to Mendix,
+    // which would create an infinite microflow loop.
+    const isMendixUpdate = useRef(false);
+
     // ── Parse allSheetsJson → allSheets array ─────────────────────────────
     const [allSheets, setAllSheets] = useState(() => parseAllSheetsJson(allSheetsJsonValue));
 
@@ -68,22 +96,58 @@ export function WorkbookContainer(props) {
     );
 
     // ── Reset on sheet switch ─────────────────────────────────────────────
-    // Cancels any pending debounced save from the previous sheet
-    // so stale data never gets written to the new sheet.
+    // When sheetId changes (user navigated to a different sheet), always
+    // re-parse regardless of pending edits — the previous sheet's edit state
+    // is irrelevant to the newly loaded sheet.
+    // Also reset both guard refs so neither carries stale state across sheets.
     useEffect(() => {
+        isPendingEdit.current  = false;
+        isMendixUpdate.current = true;   // this setSheetData is not a user edit
         const parsed = parseSheetJson(sheetJsonValue, rowCount);
         setSheetData(parsed);
         isFirstLoad.current = true;
-    }, [sheetIdValue]);
+    }, [sheetIdValue]); // eslint-disable-line react-hooks/exhaustive-deps
+    // sheetJsonValue intentionally excluded — the effect below handles
+    // same-sheet updates from Mendix.
 
+    // ── Accept Mendix-pushed sheetJson updates (formula results, etc.) ────
+    // Fires when Mendix writes a new value into sheetJson on the SAME sheet
+    // (e.g. a Java action computed a formula and committed the result).
+    // Guarded by isPendingEdit so a user's uncommitted edit is never lost.
+    // Sets isMendixUpdate before calling setSheetData so the auto-save
+    // effect below knows NOT to treat this as a user-initiated change.
     useEffect(() => {
+        // Skip the very first render — initial value already handled by useState.
+        if (isFirstLoad.current) return;
+
+        // Skip if the user has typed something that hasn't saved yet.
+        // performSave will clear this flag once the commit succeeds.
+        if (isPendingEdit.current) return;
+
+        const parsed = parseSheetJson(sheetJsonValue, rowCount);
+        isMendixUpdate.current = true;   // tell auto-save effect: not a user edit
+        setSheetData(parsed);
+    }, [sheetJsonValue]); // eslint-disable-line react-hooks/exhaustive-deps
+    // rowCount intentionally excluded — it does not change at runtime.
+
+    // ── Auto-save on user edits ───────────────────────────────────────────
+    useEffect(() => {
+        // First load: mark done and exit without saving.
         if (isFirstLoad.current) { isFirstLoad.current = false; return; }
+
+        // If this sheetData change was pushed FROM Mendix (not typed by the user),
+        // reset the flag and bail out — we must not save it back to Mendix.
+        if (isMendixUpdate.current) { isMendixUpdate.current = false; return; }
+
+        // Real user edit — mark pending and schedule debounced save.
+        isPendingEdit.current = true;
         setSavingStatus("saving");
         clearTimeout(debounceTimer.current);
         debounceTimer.current = setTimeout(() => { performSave(); }, AUTOSAVE_DEBOUNCE_MS);
         return () => clearTimeout(debounceTimer.current);
-    }, [sheetData]);
+    }, [sheetData]); // eslint-disable-line react-hooks/exhaustive-deps
 
+    // ── Cleanup on unmount ────────────────────────────────────────────────
     useEffect(() => {
         return () => { clearTimeout(debounceTimer.current); clearTimeout(savedTimer.current); };
     }, []);
@@ -93,6 +157,13 @@ export function WorkbookContainer(props) {
             const newJson = serializeSheet(sheetData);
             const success = triggerSheetChange(sheetJson, newJson, onSheetChange);
             if (!success) { setSavingStatus("idle"); return; }
+
+            // Save succeeded — Mendix now holds the latest value.
+            // Clear isPendingEdit so the next Mendix-pushed update (e.g. the
+            // formula result written by the Java action that our save triggered)
+            // is accepted and rendered by the effect above.
+            isPendingEdit.current = false;
+
             setSavingStatus("saved");
             clearTimeout(savedTimer.current);
             savedTimer.current = setTimeout(() => setSavingStatus("idle"), 2500);
@@ -182,7 +253,6 @@ export function WorkbookContainer(props) {
         colWidths:   sheetData.colWidths   || [],
         rowHeights:  sheetData.rowHeights  || [],
         mergedCells: sheetData.mergedCells || [],
-        // ── NEW: pass lockedCells through to SheetGrid ──
         lockedCells: sheetData.lockedCells || [],
     };
 
